@@ -1,0 +1,134 @@
+# Shared rules for all projects under memory_l.
+# Keep project-specific rules in each project's .gitignore.
+
+# Python bytecode and native extensions
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Packaging and build outputs
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+
+# Virtual environments and local configuration
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+.venv/
+.venv-*/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+__pypackages__/
+local_settings.py
+
+# Credentials (never commit real tokens or private keys)
+.hf_token
+.wandb_api_key
+.*_token
+.*api_key
+.netrc
+.pypirc
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.key
+
+# Tests, linters, notebooks, and tool caches
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.ruff_cache/
+.spyderproject
+.spyproject
+.ropeproject/
+
+# Documentation, framework, and generated files
+*.mo
+*.pot
+*.log
+db.sqlite3
+db.sqlite3-journal
+instance/
+.webassets-cache/
+.scrapy/
+docs/_build/
+site/
+target/
+celerybeat-schedule
+celerybeat.pid
+*.sage.py
+
+# Local datasets, downloaded models, and training/evaluation outputs
+# Do not ignore training/: it contains source code.
+cache/
+/data/
+/datasets/
+checkpoints/
+weights/
+runs/
+outputs/
+wandb/
+lightning_logs/
+tensorboard/
+events.out.tfevents.*
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+
+# JavaScript dependencies and packaged editor extensions
+node_modules/
+*.vsix
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo

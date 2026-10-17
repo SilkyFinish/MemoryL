@@ -1,0 +1,25 @@
+{
+  "name": "offline-video-preview",
+  "displayName": "Offline Video Preview (embedded)",
+  "description": "Read-only video preview using embedded data instead of remote resource URLs.",
+  "version": "0.0.1",
+  "publisher": "memory-local",
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onCustomEditor:memoryOfflineVideo.preview"],
+  "categories": ["Visualization"],
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": true },
+    "virtualWorkspaces": { "supported": true }
+  },
+  "contributes": {
+    "customEditors": [{
+      "viewType": "memoryOfflineVideo.preview",
+      "displayName": "Offline Video Preview (embedded)",
+      "priority": "option",
+      "selector": [{ "filenamePattern": "*.{mp4,webm,MP4,WEBM}" }]
+    }]
+  }
+}

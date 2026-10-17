@@ -1,0 +1,2760 @@
+{
+  "codec": {
+    "path": "/mnt/data/dylan/d2/memory/RMBench/data/decode_image_bit.py",
+    "sha256": "f87099865adb549f0b87d9d908913b22d8b099813632009b3095efd5c0ee92fc"
+  },
+  "data_root": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean",
+  "episodes": [
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18839",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            574
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18849",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            574
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12215",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            574
+          ]
+        }
+      },
+      "episode_id": "data/episode0.hdf5",
+      "file_size": 51594990,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 574,
+      "mtime_ns": 1787302066533405604,
+      "relative_path": "data/episode0.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode0.hdf5",
+      "sha256": "e60a9b13b7e56743950d020c52453f00be726f820f6d9e4a78f97dfbf157893d",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18746",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            527
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18371",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            527
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12459",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            527
+          ]
+        }
+      },
+      "episode_id": "data/episode1.hdf5",
+      "file_size": 47280050,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 527,
+      "mtime_ns": 1787302066541405639,
+      "relative_path": "data/episode1.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode1.hdf5",
+      "sha256": "26510bcde0e9ec4b968e5e4d906e7e0eea5ca52403cd0a4831cd6ce633f1440a",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18652",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            629
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18456",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            629
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12125",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            629
+          ]
+        }
+      },
+      "episode_id": "data/episode10.hdf5",
+      "file_size": 56086101,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 629,
+      "mtime_ns": 1787302066649406102,
+      "relative_path": "data/episode10.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode10.hdf5",
+      "sha256": "6967dd77c44270a2bf9e5198b54a70b3fb3d2896eb11ed24cff8e6a6ee8b10e0",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18769",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            530
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18465",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            530
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12028",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            530
+          ]
+        }
+      },
+      "episode_id": "data/episode11.hdf5",
+      "file_size": 47393770,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 530,
+      "mtime_ns": 1787302066659650225,
+      "relative_path": "data/episode11.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode11.hdf5",
+      "sha256": "ad74284362f494edaab5f8b5d8f3627ec110887e1bdc374eb4e5fbda3e1fb39f",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18828",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            576
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18604",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            576
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12502",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            576
+          ]
+        }
+      },
+      "episode_id": "data/episode12.hdf5",
+      "file_size": 51935384,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 576,
+      "mtime_ns": 1787302066666406176,
+      "relative_path": "data/episode12.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode12.hdf5",
+      "sha256": "6d8e799f001c9f636e336dde1a30ad6ee7bc4b9b30134afc8d9a44aea4e8d45a",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18736",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18411",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12230",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        }
+      },
+      "episode_id": "data/episode13.hdf5",
+      "file_size": 47464680,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 529,
+      "mtime_ns": 1787302066674406210,
+      "relative_path": "data/episode13.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode13.hdf5",
+      "sha256": "d4b94e9007d8465414eec28b5cb1e0a55ee8b9175999c65e1cdd9e4253a30b4f",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18639",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            523
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18251",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            523
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12088",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            523
+          ]
+        }
+      },
+      "episode_id": "data/episode14.hdf5",
+      "file_size": 46466360,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 523,
+      "mtime_ns": 1787302066682406244,
+      "relative_path": "data/episode14.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode14.hdf5",
+      "sha256": "6bb59dc5a84959b4caedb79a3bf3a55fa0147b53338ad6d978f6005256c5708e",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18748",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18703",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12398",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        }
+      },
+      "episode_id": "data/episode15.hdf5",
+      "file_size": 43396692,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 481,
+      "mtime_ns": 1787302066693777019,
+      "relative_path": "data/episode15.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode15.hdf5",
+      "sha256": "0be2f8d4f00fba9da99894831b5150db6c48ea9adc39f5fe52564f11ef37f94e",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18557",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            432
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18235",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            432
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12145",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            432
+          ]
+        }
+      },
+      "episode_id": "data/episode16.hdf5",
+      "file_size": 38370440,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 432,
+      "mtime_ns": 1787302066704406339,
+      "relative_path": "data/episode16.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode16.hdf5",
+      "sha256": "40020d09e2ee6572a69cc90a80aed9a3536a62594bf38e09ff92b41480ff65ea",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18910",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18886",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12348",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        }
+      },
+      "episode_id": "data/episode17.hdf5",
+      "file_size": 47923323,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 529,
+      "mtime_ns": 1787302066756406562,
+      "relative_path": "data/episode17.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode17.hdf5",
+      "sha256": "968b0cc6564ab5bc1248c3a61498362e1d85e80df38d35f9c218d7beaa12eafd",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18897",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            430
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18959",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            430
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12231",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            430
+          ]
+        }
+      },
+      "episode_id": "data/episode18.hdf5",
+      "file_size": 38900690,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 430,
+      "mtime_ns": 1787302066774011856,
+      "relative_path": "data/episode18.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode18.hdf5",
+      "sha256": "492b1dcc10edf15d92a25b6af69428d39873757691422bde01edb8c7e69577a3",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18814",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            626
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18106",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            626
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12322",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            626
+          ]
+        }
+      },
+      "episode_id": "data/episode19.hdf5",
+      "file_size": 56096658,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 626,
+      "mtime_ns": 1787302066784860740,
+      "relative_path": "data/episode19.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode19.hdf5",
+      "sha256": "1b4d02b24d268bef707a43f150ea626a3056373e14a954e04f78bcaf4f9e2eb6",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18730",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            626
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18477",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            626
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12440",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            626
+          ]
+        }
+      },
+      "episode_id": "data/episode2.hdf5",
+      "file_size": 56208086,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 626,
+      "mtime_ns": 1787302066548405668,
+      "relative_path": "data/episode2.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode2.hdf5",
+      "sha256": "c9e8e0c176235a1ae69c49db982da8b0313ff145d295324d4cb2239214b5fafb",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18993",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            626
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S19035",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            626
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12318",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            626
+          ]
+        }
+      },
+      "episode_id": "data/episode20.hdf5",
+      "file_size": 56866012,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 626,
+      "mtime_ns": 1787302066793171258,
+      "relative_path": "data/episode20.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode20.hdf5",
+      "sha256": "5c800229c449994673aac1abe0bfdc9d5bd1976681736538edd793bc3c9c9dcc",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18573",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            428
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18264",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            428
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12379",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            428
+          ]
+        }
+      },
+      "episode_id": "data/episode21.hdf5",
+      "file_size": 38161756,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 428,
+      "mtime_ns": 1787302066798406743,
+      "relative_path": "data/episode21.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode21.hdf5",
+      "sha256": "a43fe07f89839dba2d04a823fc564a29dc05e5c040870cb20c813f415ab17537",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18649",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18240",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S11991",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        }
+      },
+      "episode_id": "data/episode22.hdf5",
+      "file_size": 51623660,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 580,
+      "mtime_ns": 1787302066805406773,
+      "relative_path": "data/episode22.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode22.hdf5",
+      "sha256": "3b4f7af5db9351d528c29a6b3b91a9a11e02196e0adbdf2e90443573c7c363c2",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18795",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            482
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S19030",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            482
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12081",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            482
+          ]
+        }
+      },
+      "episode_id": "data/episode23.hdf5",
+      "file_size": 43368774,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 482,
+      "mtime_ns": 1787302066814323037,
+      "relative_path": "data/episode23.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode23.hdf5",
+      "sha256": "fa4d57a827841c5c0e815e006594a64669c2806d5a4462c398903c22dd3a884e",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18605",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            284
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18514",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            284
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12381",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            284
+          ]
+        }
+      },
+      "episode_id": "data/episode24.hdf5",
+      "file_size": 25481152,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 284,
+      "mtime_ns": 1787302066821406842,
+      "relative_path": "data/episode24.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode24.hdf5",
+      "sha256": "d8b5e0f0cde15a1bc200334be3f9a452ccd6257dfd168d0e23c1c42d430a42b4",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18922",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S19285",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12438",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        }
+      },
+      "episode_id": "data/episode25.hdf5",
+      "file_size": 48176185,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 529,
+      "mtime_ns": 1787302066829406876,
+      "relative_path": "data/episode25.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode25.hdf5",
+      "sha256": "4ebaa70ef57bbfb6431312f441cbc99b3342bb86644f9e7616c56fa69768fd11",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18626",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            434
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18267",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            434
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12196",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            434
+          ]
+        }
+      },
+      "episode_id": "data/episode26.hdf5",
+      "file_size": 38644318,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 434,
+      "mtime_ns": 1787302066838682124,
+      "relative_path": "data/episode26.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode26.hdf5",
+      "sha256": "2e7bf2a649225d38a2b747751b47db7efba9b74db2736850d9634096447e2d63",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18816",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            479
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18667",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            479
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12505",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            479
+          ]
+        }
+      },
+      "episode_id": "data/episode27.hdf5",
+      "file_size": 43190482,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 479,
+      "mtime_ns": 1787302066843406936,
+      "relative_path": "data/episode27.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode27.hdf5",
+      "sha256": "f0e28fc6295f9d926f04be900eaa01d92bc78af6be087724c35dc15ab1207514",
+      "split": "validation",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18883",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18653",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12089",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        }
+      },
+      "episode_id": "data/episode28.hdf5",
+      "file_size": 43316365,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 481,
+      "mtime_ns": 1787302066850406966,
+      "relative_path": "data/episode28.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode28.hdf5",
+      "sha256": "1c8880d733dda02ba7b6bb1152e30e81d6c8771734a3dac22d75393bf67781ed",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18779",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            483
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S19027",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            483
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12096",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            483
+          ]
+        }
+      },
+      "episode_id": "data/episode29.hdf5",
+      "file_size": 43471742,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 483,
+      "mtime_ns": 1787302066860415532,
+      "relative_path": "data/episode29.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode29.hdf5",
+      "sha256": "53eb0af2367f68d1c5878c3f2e876e63e71c6cde8e9c10915cfc61a2648fd661",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18552",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            431
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18035",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            431
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12459",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            431
+          ]
+        }
+      },
+      "episode_id": "data/episode3.hdf5",
+      "file_size": 38339860,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 431,
+      "mtime_ns": 1787302066571405767,
+      "relative_path": "data/episode3.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode3.hdf5",
+      "sha256": "9d7b735182153031e0e3b25cd9065d873a69e6869e577f118ffedd361e5b4cd7",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18540",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            524
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18340",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            524
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12113",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            524
+          ]
+        }
+      },
+      "episode_id": "data/episode30.hdf5",
+      "file_size": 46532104,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 524,
+      "mtime_ns": 1787302066885521882,
+      "relative_path": "data/episode30.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode30.hdf5",
+      "sha256": "a4298d33e6ac2366cf20f7c06f8df4ca3ba143f698bc64c103ccff5bc50ab77d",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18669",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            628
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18446",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            628
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12076",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            628
+          ]
+        }
+      },
+      "episode_id": "data/episode31.hdf5",
+      "file_size": 55996344,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 628,
+      "mtime_ns": 1787302066895407160,
+      "relative_path": "data/episode31.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode31.hdf5",
+      "sha256": "04d27f060b6aec721de6431405173e1dddbb7932b3f676973aa6ba25712074e6",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18810",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18434",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12184",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            529
+          ]
+        }
+      },
+      "episode_id": "data/episode32.hdf5",
+      "file_size": 47490072,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 529,
+      "mtime_ns": 1787302066902407190,
+      "relative_path": "data/episode32.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode32.hdf5",
+      "sha256": "f82acb602922e18fe00a474cb9f9e55f55ae418ff227ea980ea46bd4f6303ffa",
+      "split": "validation",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18635",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            531
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18267",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            531
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S11959",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            531
+          ]
+        }
+      },
+      "episode_id": "data/episode33.hdf5",
+      "file_size": 46946306,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 531,
+      "mtime_ns": 1787302066910407224,
+      "relative_path": "data/episode33.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode33.hdf5",
+      "sha256": "28e731189e8b6492323b0a8f9d38c7298b67a1f2532d01edd19a9c6bde27fb60",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18818",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S19061",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12125",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        }
+      },
+      "episode_id": "data/episode34.hdf5",
+      "file_size": 43306745,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 481,
+      "mtime_ns": 1787302066917407254,
+      "relative_path": "data/episode34.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode34.hdf5",
+      "sha256": "591e24fa29ed91587c9e098f3bfd24460ae289b7555e4c4be7dd5d14c71402c8",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18623",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S17908",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12027",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        }
+      },
+      "episode_id": "data/episode35.hdf5",
+      "file_size": 51363820,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 580,
+      "mtime_ns": 1787302066924407284,
+      "relative_path": "data/episode35.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode35.hdf5",
+      "sha256": "2604631a5fa1ce67c6663b124621650958cc5f27bea9002d21d0af194d99d2d8",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18770",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18277",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12365",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        }
+      },
+      "episode_id": "data/episode36.hdf5",
+      "file_size": 51772140,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 580,
+      "mtime_ns": 1787302066932407319,
+      "relative_path": "data/episode36.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode36.hdf5",
+      "sha256": "314ec9561e453671d187f602f9f9d2608a51bd7e90ac9e82c0ce1beb59f01ec2",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18629",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            630
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18634",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            630
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12069",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            630
+          ]
+        }
+      },
+      "episode_id": "data/episode37.hdf5",
+      "file_size": 56300600,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 630,
+      "mtime_ns": 1787302066968407473,
+      "relative_path": "data/episode37.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode37.hdf5",
+      "sha256": "b0d984e6ee4ba229e3179b57d970e3d6433348bb02a2a576d178e3b8042ecf1b",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18692",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            287
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18533",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            287
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12177",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            287
+          ]
+        }
+      },
+      "episode_id": "data/episode38.hdf5",
+      "file_size": 25673724,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 287,
+      "mtime_ns": 1787302066984407542,
+      "relative_path": "data/episode38.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode38.hdf5",
+      "sha256": "2463324c69c64833278b2c5465b43d23b40cf66e9e12b905ad1d80d332480ba5",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18631",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            629
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18579",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            629
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12123",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            629
+          ]
+        }
+      },
+      "episode_id": "data/episode39.hdf5",
+      "file_size": 56225739,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 629,
+      "mtime_ns": 1787302066998407602,
+      "relative_path": "data/episode39.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode39.hdf5",
+      "sha256": "5b17e4149b73dc69cf705cf7f7f40ea983e2de20e07e1ada5969072325226767",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18823",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            627
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18067",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            627
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12271",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            627
+          ]
+        }
+      },
+      "episode_id": "data/episode4.hdf5",
+      "file_size": 55757363,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 627,
+      "mtime_ns": 1787302066580405806,
+      "relative_path": "data/episode4.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode4.hdf5",
+      "sha256": "06ba9d33ba8bc7c37511e09ea46cb4c4b9a9a4e965c9b16609e8e0bdc46424ba",
+      "split": "validation",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18587",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            630
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18589",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            630
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12221",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            630
+          ]
+        }
+      },
+      "episode_id": "data/episode40.hdf5",
+      "file_size": 56294300,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 630,
+      "mtime_ns": 1787302067023320423,
+      "relative_path": "data/episode40.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode40.hdf5",
+      "sha256": "cbbd4e773a3343e7cb2f9aad1ffd70a8fceea7af24a11f8da5eba6e66e8b4835",
+      "split": "validation",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18773",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            576
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18516",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            576
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12466",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            576
+          ]
+        }
+      },
+      "episode_id": "data/episode41.hdf5",
+      "file_size": 51823064,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 576,
+      "mtime_ns": 1787302067030430183,
+      "relative_path": "data/episode41.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode41.hdf5",
+      "sha256": "dc3f30270499a586e998a148b9db5d27504f38c78e87fd927e4e0b951bc6ec36",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18588",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            433
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18363",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            433
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12242",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            433
+          ]
+        }
+      },
+      "episode_id": "data/episode42.hdf5",
+      "file_size": 38561393,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 433,
+      "mtime_ns": 1787302067036407765,
+      "relative_path": "data/episode42.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode42.hdf5",
+      "sha256": "48bd073f2f5a94d937667e87898b55202c659614ff0c462ab0b3837a2480f012",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18913",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            479
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18663",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            479
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12157",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            479
+          ]
+        }
+      },
+      "episode_id": "data/episode43.hdf5",
+      "file_size": 43191440,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 479,
+      "mtime_ns": 1787302067048407817,
+      "relative_path": "data/episode43.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode43.hdf5",
+      "sha256": "08ce3789ad3fc195b9d14a6bd7e3163143e59bf41110e6bcb8444dd4f95aa85f",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18913",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            528
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18667",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            528
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12327",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            528
+          ]
+        }
+      },
+      "episode_id": "data/episode44.hdf5",
+      "file_size": 47718728,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 528,
+      "mtime_ns": 1787302067058641691,
+      "relative_path": "data/episode44.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode44.hdf5",
+      "sha256": "02691d2ec5b2c0542d77a8ca36579944a9a2f1f25d431cf8bbc3a0e986240364",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18793",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S19013",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12114",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            481
+          ]
+        }
+      },
+      "episode_id": "data/episode45.hdf5",
+      "file_size": 43344744,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 481,
+      "mtime_ns": 1787302067066923711,
+      "relative_path": "data/episode45.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode45.hdf5",
+      "sha256": "f63969be4db289a83acf967fa35749a45a721056786fc3a505c5394c55f38b03",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18803",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            627
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18029",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            627
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12276",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            627
+          ]
+        }
+      },
+      "episode_id": "data/episode46.hdf5",
+      "file_size": 55836992,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 627,
+      "mtime_ns": 1787302067074066039,
+      "relative_path": "data/episode46.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode46.hdf5",
+      "sha256": "88339141d3c7a66dcdc9a1ba716cc0540d0912252424f617938600560e3208c9",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18608",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            434
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18537",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            434
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12139",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            434
+          ]
+        }
+      },
+      "episode_id": "data/episode47.hdf5",
+      "file_size": 38751516,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 434,
+      "mtime_ns": 1787302067082407963,
+      "relative_path": "data/episode47.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode47.hdf5",
+      "sha256": "2830b90d17a5b6bfb90546d7761e11e730b5f24b3fad5a2dfa5fceb9394c4f54",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18701",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            575
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S17773",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            575
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12197",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            575
+          ]
+        }
+      },
+      "episode_id": "data/episode48.hdf5",
+      "file_size": 51046010,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 575,
+      "mtime_ns": 1787302067092909454,
+      "relative_path": "data/episode48.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode48.hdf5",
+      "sha256": "1892be8af3b1151f5b160cd325a62931cbacd75cd6e2a23326573853471334c6",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18900",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            480
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18318",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            480
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12142",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            480
+          ]
+        }
+      },
+      "episode_id": "data/episode49.hdf5",
+      "file_size": 43081880,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 480,
+      "mtime_ns": 1787302067099893483,
+      "relative_path": "data/episode49.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode49.hdf5",
+      "sha256": "dd9bad51d072b6dcd2f1e54acb22c7729eb30a9ba2c3fe4df09a9992223727c9",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S19057",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            527
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18693",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            527
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12701",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            527
+          ]
+        }
+      },
+      "episode_id": "data/episode5.hdf5",
+      "file_size": 47840778,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 527,
+      "mtime_ns": 1787302066588405840,
+      "relative_path": "data/episode5.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode5.hdf5",
+      "sha256": "1c5892eae452e4c8ab32237aaecd339650ba1da8d67484889bb4d8b8a0f2fd75",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18608",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            628
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18553",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            628
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12197",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            628
+          ]
+        }
+      },
+      "episode_id": "data/episode6.hdf5",
+      "file_size": 56098708,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 628,
+      "mtime_ns": 1787302066595405870,
+      "relative_path": "data/episode6.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode6.hdf5",
+      "sha256": "e8ae6bcf57deda703ecfd4fa31f3c2756860c2f5dfaddc7fb5071f451c93d7d5",
+      "split": "validation",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18653",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18033",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12052",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            580
+          ]
+        }
+      },
+      "episode_id": "data/episode7.hdf5",
+      "file_size": 51519840,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 580,
+      "mtime_ns": 1787302066612405944,
+      "relative_path": "data/episode7.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode7.hdf5",
+      "sha256": "0d6d2749d2b857332e23bc7ab251d35452d98d7b320b0b59aa3b0547a63bef3d",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18863",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            478
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18672",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            478
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12083",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            478
+          ]
+        }
+      },
+      "episode_id": "data/episode8.hdf5",
+      "file_size": 43046350,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 478,
+      "mtime_ns": 1787302066634406038,
+      "relative_path": "data/episode8.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode8.hdf5",
+      "sha256": "8380363dbd18479963d6da47f6fe668731b43e9fe3420079268ecbecd415d2c9",
+      "split": "train",
+      "task": "."
+    },
+    {
+      "cameras": {
+        "head_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18633",
+          "key": "observation/head_camera/rgb",
+          "storage_shape": [
+            621
+          ]
+        },
+        "left_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S18097",
+          "key": "observation/left_camera/rgb",
+          "storage_shape": [
+            621
+          ]
+        },
+        "right_camera": {
+          "decoded_size_hw": [
+            240,
+            320
+          ],
+          "dtype": "|S12200",
+          "key": "observation/right_camera/rgb",
+          "storage_shape": [
+            621
+          ]
+        }
+      },
+      "episode_id": "data/episode9.hdf5",
+      "file_size": 55378658,
+      "instruction": "Observe the two numbers on the table. Press the left button the number of times corresponding to the number on the left, and press the middle button the number of times corresponding to the number on the right. Then press the right button once to confirm.",
+      "instruction_source": {
+        "key": "language_instruction",
+        "kind": "hdf5"
+      },
+      "length": 621,
+      "mtime_ns": 1787302066642406073,
+      "relative_path": "data/episode9.hdf5",
+      "resolved_path": "/mnt/data/dylan/d2/memory/RMBench/data/press_button/demo_clean/data/episode9.hdf5",
+      "sha256": "6053203f6c592a67fd3fd4c1e8e94a68a602642178a1ebd4a7b0f3b279c1a738",
+      "split": "train",
+      "task": "."
+    }
+  ],
+  "manifest_sha256": "88adc253512d73e0848ec9211b62080099df3ff03ac1624cfb8fbc156f92f41a",
+  "normalization": {
+    "action": {
+      "mask": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "max": [
+        1.819419594539795e-05,
+        2.118351459503174,
+        1.6413487195968628,
+        1.9287528630229644e-05,
+        0.002630000002682209,
+        1.0703961849212646,
+        1.0,
+        0.510216236114502,
+        1.8102266788482666,
+        1.1864171028137207,
+        0.0,
+        0.0004854760773014277,
+        0.0,
+        1.0
+      ],
+      "min": [
+        -0.8652009963989258,
+        -1.489501755713718e-05,
+        -3.476843994576484e-05,
+        -1.1350536346435547,
+        -0.01666182093322277,
+        -1.1006746944985935e-06,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -1.014996886253357,
+        0.0,
+        -1.0478557348251343,
+        0.0
+      ],
+      "q01": [
+        -0.8647058141231537,
+        -1.489501755713718e-05,
+        -2.991353721881751e-05,
+        -1.1335212802886963,
+        -0.014686142066493631,
+        -1.1006746944985935e-06,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -1.014996886253357,
+        0.0,
+        -1.0478557348251343,
+        0.0
+      ],
+      "q99": [
+        1.819419594539795e-05,
+        2.118239641189575,
+        1.640182775259018,
+        1.9287528630229644e-05,
+        0.0025601322553120555,
+        1.069981415271759,
+        1.0,
+        0.5102107524871826,
+        1.7796718943119048,
+        1.1864171028137207,
+        0.0,
+        0.00038057191472034896,
+        0.0,
+        1.0
+      ]
+    },
+    "action_dim": 14,
+    "clip_range": [
+      -1.0,
+      1.0
+    ],
+    "constant_channel_rule": "q99-q01 <= 1e-8 maps to zero; inverse maps to q01; mask stays true",
+    "gripper_rule": "continuous channels 6 and 13; same quantile transform as the twelve arm channels",
+    "quantile_method": "linear",
+    "sample_count": 23414,
+    "source": "train episodes only; every real target row joint_action/vector[1:] used once each; the initial drive-target row has no preceding observation and is excluded; no horizon repetitions and no padding rows",
+    "target_offset": 1,
+    "target_rows": "joint_action/vector[1:] per train episode; rows used once each",
+    "training_episode_ids": [
+      "data/episode0.hdf5",
+      "data/episode1.hdf5",
+      "data/episode10.hdf5",
+      "data/episode11.hdf5",
+      "data/episode12.hdf5",
+      "data/episode13.hdf5",
+      "data/episode14.hdf5",
+      "data/episode15.hdf5",
+      "data/episode16.hdf5",
+      "data/episode17.hdf5",
+      "data/episode18.hdf5",
+      "data/episode19.hdf5",
+      "data/episode2.hdf5",
+      "data/episode20.hdf5",
+      "data/episode21.hdf5",
+      "data/episode22.hdf5",
+      "data/episode23.hdf5",
+      "data/episode24.hdf5",
+      "data/episode25.hdf5",
+      "data/episode26.hdf5",
+      "data/episode28.hdf5",
+      "data/episode29.hdf5",
+      "data/episode3.hdf5",
+      "data/episode30.hdf5",
+      "data/episode31.hdf5",
+      "data/episode33.hdf5",
+      "data/episode34.hdf5",
+      "data/episode35.hdf5",
+      "data/episode36.hdf5",
+      "data/episode37.hdf5",
+      "data/episode38.hdf5",
+      "data/episode39.hdf5",
+      "data/episode41.hdf5",
+      "data/episode42.hdf5",
+      "data/episode43.hdf5",
+      "data/episode44.hdf5",
+      "data/episode45.hdf5",
+      "data/episode46.hdf5",
+      "data/episode47.hdf5",
+      "data/episode48.hdf5",
+      "data/episode49.hdf5",
+      "data/episode5.hdf5",
+      "data/episode7.hdf5",
+      "data/episode8.hdf5",
+      "data/episode9.hdf5"
+    ]
+  },
+  "protocol": {
+    "action_dim": 14,
+    "action_key": "joint_action/vector",
+    "action_space": "ALOHA14 absolute drive-target joints and continuous normalized grippers",
+    "bank_reset": "before every group; all queries within a group belong to one episode",
+    "cameras": [
+      "head_camera",
+      "left_camera",
+      "right_camera"
+    ],
+    "channel_order": [
+      "left_arm_joint_0",
+      "left_arm_joint_1",
+      "left_arm_joint_2",
+      "left_arm_joint_3",
+      "left_arm_joint_4",
+      "left_arm_joint_5",
+      "left_gripper",
+      "right_arm_joint_0",
+      "right_arm_joint_1",
+      "right_arm_joint_2",
+      "right_arm_joint_3",
+      "right_arm_joint_4",
+      "right_arm_joint_5",
+      "right_gripper"
+    ],
+    "execute_prefix": 4,
+    "format": "native-rmbench-hdf5",
+    "gripper_binarization": false,
+    "gripper_indices": [
+      6,
+      13
+    ],
+    "group_size": 4,
+    "horizon": 16,
+    "image_decoder": "RMBench decode_image_bit; legacy-unmarked/XPL-RGB1 auto-detection; output RGB",
+    "image_size": [
+      224,
+      224
+    ],
+    "label_alignment": "observation[t] -> joint_action/vector[t+1:t+1+H]; each label is the next recorded absolute drive target, not measured qpos and not a certified next-issued command",
+    "padding": "repeat the final real target row; valid_mask false for every padded horizon timestep; the final recorded RGB frame has no target row and is never supervised",
+    "query_schedule": "0, execute_prefix, 2*execute_prefix, ... <= episode_length - 2 (strictly below episode_length - 1, so every query has at least one following target row); consecutive disjoint groups",
+    "resize_interpolation": "bilinear",
+    "semantic_risks": [
+      "Native labels are captured absolute drive targets, not measured qpos, and are not a certified next-issued command. With target_offset=1 a target row is the next recorded absolute drive target; closed-loop validation is still required.",
+      "Historical HDF5 files lack per-frame collector commit provenance, so the exact command issued between two recorded frames cannot be reconstructed from the file alone.",
+      "New XPolicyLab state/action HDF5 shifts targets by one frame and reorders packed channels; it is intentionally not accepted as this native format.",
+      "The final recorded RGB frame has no following target row and is therefore never supervised; the last usable query timestep is episode_length - 2 for a one-step horizon."
+    ],
+    "target_offset": 1,
+    "valid_count_rule": "valid_count = min(horizon, episode_length - (t + 1)) against real target rows"
+  },
+  "schema": "choice-memory-native-rmbench-v2",
+  "split_algorithm": "per-task SHA256(seed:episode_id) rank",
+  "split_seed": 42,
+  "validation_fraction": 0.1
+}
