@@ -52,6 +52,7 @@ class ModelWrapper:
         expected_protocol: dict | None = None,
         policy=None,
         payload: dict | None = None,
+        allow_debug_checkpoint: bool = False,
     ):
         if action_type != "joint":
             raise ValueError("TTTchoiceMem requires action_type=joint (native ALOHA absolute joints)")
@@ -60,7 +61,8 @@ class ModelWrapper:
                 raise ValueError("Pass a checkpoint, or inject both policy and payload for a CPU test")
             from .checkpoint import load_checkpoint
 
-            policy, payload = load_checkpoint(checkpoint_path, device, expected=expected)
+            debug_opt_in = {"allow_debug_checkpoint": True} if allow_debug_checkpoint is True else {}
+            policy, payload = load_checkpoint(checkpoint_path, device, expected=expected, **debug_opt_in)
         elif checkpoint_path is not None or payload is None:
             raise ValueError("Injected policies require payload and must not claim a real checkpoint")
         self.policy = policy
@@ -70,6 +72,12 @@ class ModelWrapper:
         if not isinstance(self.protocol, Mapping) or not isinstance(self.normalization, Mapping):
             raise ValueError("Checkpoint protocol and normalization must be mappings")
         configuration = self.config.to_dict() if hasattr(self.config, "to_dict") else vars(self.config)
+        if configuration.get("backbone_initialization", "pretrained") == "random-frozen-debug":
+            if allow_debug_checkpoint is not True:
+                raise ValueError("Debug checkpoint requires explicit allow_debug_checkpoint=True")
+            from .checkpoint import validate_initialization_contract
+
+            validate_initialization_contract(configuration, self.protocol, payload.get("weight_compatibility"))
         for field_name, requested_value in (expected or {}).items():
             if field_name not in configuration or configuration[field_name] != requested_value:
                 raise ValueError(f"Checkpoint configuration mismatch: {field_name}={requested_value!r}")
@@ -147,6 +155,8 @@ class ModelWrapper:
             "execute_prefix": self.config.execute_prefix,
             "cameras": list(self.config.cameras),
             "action_dim": self.config.action_dim,
+            "backbone_initialization": getattr(self.config, "backbone_initialization", "pretrained"),
+            "backbone_initialization_seed": getattr(self.config, "backbone_initialization_seed", 42),
         }
 
     def reset(self, episode_id=None) -> None:

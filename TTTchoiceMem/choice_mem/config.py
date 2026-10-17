@@ -1,4 +1,4 @@
-"""Serializable architecture and observation contract for all four policies."""
+"""Serializable MemoryVLA method and native RMBench observation contract."""
 
 from dataclasses import asdict, dataclass, field
 
@@ -22,14 +22,18 @@ def validate_cameras(cameras) -> list[str]:
 
 @dataclass
 class PolicyConfig:
-    backbone: str = "qwen35"
-    action_head: str = "oft"
-    model_source: str = "Qwen/Qwen3.5-0.8B"
+    backbone: str = "memoryvla"
+    action_head: str = "diffusion"
+    # Original VLM assets must be selected explicitly, never a Qwen fallback.
+    model_source: str = ""
     model_revision: str | None = None
+    backbone_initialization: str = "pretrained"
+    backbone_initialization_seed: int = 42
+    base_vlm_id: str = "prism-dinosiglip-224px+7b"
     horizon: int = 16
     action_dim: int = 14
     execute_prefix: int = 4
-    cameras: list[str] = field(default_factory=lambda: ["head_camera", "left_camera", "right_camera"])
+    cameras: list[str] = field(default_factory=lambda: ["head_camera"])
     image_size: list[int] = field(default_factory=lambda: [224, 224])
     per_token_size: int = 256
     mem_length: int = 16
@@ -38,12 +42,17 @@ class PolicyConfig:
     fusion_type: str = "gate"
     consolidate_type: str = "tome"
     update_fused: bool = False
-    group_size: int = 4
+    group_size: int = 16
+    history_sampling: str = "random"
+    image_aug: bool = True
     oft_hidden_dim: int = 256
-    diffusion_model_type: str = "DiT-S"
+    diffusion_model_type: str = "DiT-L"
+    repeated_diffusion_steps: int = 4
+    mask_padding_loss: bool = False
+    inference_timestep_mode: str = "query"
     ddim_steps: int = 10
     cfg_scale: float = 1.5
-    freeze_backbone: bool = True
+    freeze_backbone: bool = False
     dtype: str = "bfloat16"
     use_cache: bool = False
     preprocessing: dict = field(default_factory=dict)
@@ -51,6 +60,22 @@ class PolicyConfig:
     asset_manifest: dict = field(default_factory=dict)
 
     def __post_init__(self):
+        if self.backbone_initialization not in {"pretrained", "random-frozen-debug"}:
+            raise ValueError("backbone_initialization must be pretrained or random-frozen-debug")
+        if type(self.backbone_initialization_seed) is not int or not 0 <= self.backbone_initialization_seed < 2**63:
+            raise ValueError("backbone_initialization_seed must be an integer in [0, 2**63)")
+        if self.backbone_initialization == "random-frozen-debug":
+            required = {
+                "backbone": "memoryvla",
+                "action_head": "diffusion",
+                "diffusion_model_type": "DiT-L",
+                "freeze_backbone": True,
+                "dtype": "bfloat16",
+                "base_vlm_id": "prism-dinosiglip-224px+7b",
+            }
+            for name, value in required.items():
+                if getattr(self, name) != value or (name == "freeze_backbone" and self.freeze_backbone is not True):
+                    raise ValueError(f"random-frozen-debug requires {name}={value!r}")
         if self.backbone not in {"memoryvla", "qwen35"}:
             raise ValueError("backbone must be memoryvla or qwen35")
         if self.action_head not in {"diffusion", "oft"}:
@@ -62,7 +87,15 @@ class PolicyConfig:
         if self.use_cache:
             raise ValueError("Cross-query backbone caching is not supported; use_cache must be false")
         if self.mem_length < 1 or self.retrieval_layers < 1 or self.group_size < 2:
-            raise ValueError("Positive memory capacity/layers and a sequential group_size >= 2 are required")
+            raise ValueError("Positive memory capacity/layers and a group_size >= 2 are required")
+        if self.history_sampling not in {"random", "sequential"}:
+            raise ValueError("history_sampling must be random or sequential")
+        if type(self.repeated_diffusion_steps) is not int or self.repeated_diffusion_steps < 1:
+            raise ValueError("repeated_diffusion_steps must be a positive integer")
+        if type(self.mask_padding_loss) is not bool or type(self.image_aug) is not bool:
+            raise ValueError("mask_padding_loss and image_aug must be booleans")
+        if self.inference_timestep_mode not in {"query", "action"}:
+            raise ValueError("inference_timestep_mode must be query or action")
         self.cameras = validate_cameras(self.cameras)
         if len(self.image_size) != 2 or min(self.image_size) <= 0:
             raise ValueError("image_size must contain height and width")

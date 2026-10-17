@@ -76,13 +76,18 @@ LLM_BACKBONES = {
 
 
 def get_vision_backbone_and_transform(
-    vision_backbone_id: str, image_resize_strategy: str
+    vision_backbone_id: str, image_resize_strategy: str, *, pretrained: bool = True
 ) -> Tuple[VisionBackbone, ImageTransform]:
     """Instantiate a Vision Backbone, returning both the nn.Module wrapper class and default Image Transform."""
     if vision_backbone_id in VISION_BACKBONES:
         vision_cfg = VISION_BACKBONES[vision_backbone_id]
+        options = dict(vision_cfg["kwargs"])
+        if not pretrained:
+            if vision_cfg["cls"] is not DinoSigLIPViTBackbone:
+                raise ValueError("Config-only vision construction is supported only for DINO+SigLIP")
+            options["pretrained"] = False
         vision_backbone: VisionBackbone = vision_cfg["cls"](
-            vision_backbone_id, image_resize_strategy, **vision_cfg["kwargs"]
+            vision_backbone_id, image_resize_strategy, **options
         )
         image_transform = vision_backbone.get_image_transform()
         return vision_backbone, image_transform
@@ -96,15 +101,32 @@ def get_llm_backbone_and_tokenizer(
     llm_max_length: int = 2048,
     hf_token: Optional[str] = None,
     inference_mode: bool = False,
+    *,
+    hf_hub_path: Optional[str] = None,
+    local_files_only: bool = False,
+    torch_dtype=None,
+    attn_implementation: Optional[str] = None,
+    use_cache: Optional[bool] = None,
 ) -> Tuple[LLMBackbone, PreTrainedTokenizerBase]:
     if llm_backbone_id in LLM_BACKBONES:
         llm_cfg = LLM_BACKBONES[llm_backbone_id]
+        options = dict(llm_cfg["kwargs"])
+        if hf_hub_path is not None:
+            options["hf_hub_path"] = hf_hub_path
+        if local_files_only:
+            options["local_files_only"] = True
+        if torch_dtype is not None:
+            options["torch_dtype"] = torch_dtype
+        if attn_implementation is not None:
+            options["attn_implementation"] = attn_implementation
+        if use_cache is not None:
+            options["use_cache"] = use_cache
         llm_backbone: LLMBackbone = llm_cfg["cls"](
             llm_backbone_id,
             llm_max_length=llm_max_length,
             hf_token=hf_token,
             inference_mode=inference_mode,
-            **llm_cfg["kwargs"],
+            **options,
         )
         tokenizer = llm_backbone.get_tokenizer()
         return llm_backbone, tokenizer

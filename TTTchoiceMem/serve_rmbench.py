@@ -19,6 +19,10 @@ from choice_mem.runtime import DEFAULT_RMBENCH_ROOT, ModelWrapper, add_native_pa
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument(
+        "--allow-debug-checkpoint", action="store_true",
+        help="Explicitly allow a random-frozen debug policy, never a pretrained benchmark result",
+    )
     parser.add_argument("--rmbench-root", type=Path, default=DEFAULT_RMBENCH_ROOT)
     parser.add_argument("--device", default="cpu", help="Explicit model device; no GPU is selected automatically")
     parser.add_argument("--cpu-threads", type=int, default=4)
@@ -71,6 +75,7 @@ def main(argv=None) -> None:
         expected=expected,
         action_type=arguments.action_type,
         expected_protocol=expected_protocol,
+        allow_debug_checkpoint=arguments.allow_debug_checkpoint,
     )
     contract = model.protocol_summary()
     print(
@@ -79,7 +84,9 @@ def main(argv=None) -> None:
         f"horizon={contract['horizon']}, execute_prefix={contract['execute_prefix']}, "
         f"target_offset={contract['target_offset']!r}, "
         f"gripper_binarization={contract['gripper_binarization']}, "
-        f"label_alignment={contract['label_alignment']!r}",
+        f"label_alignment={contract['label_alignment']!r}, "
+        f"backbone_initialization={contract['backbone_initialization']}, "
+        f"backbone_initialization_seed={contract['backbone_initialization_seed']}",
         flush=True,
     )
     if arguments.protocol == "ws":

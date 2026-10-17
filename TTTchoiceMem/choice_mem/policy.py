@@ -48,6 +48,8 @@ class ChoiceMemoryPolicy(nn.Module):
                 model_type=config.diffusion_model_type,
                 ddim_steps=config.ddim_steps,
                 cfg_scale=config.cfg_scale,
+                repeated_diffusion_steps=config.repeated_diffusion_steps,
+                mask_padding_loss=config.mask_padding_loss,
             )
         )
         self.episode_id = None
@@ -89,7 +91,12 @@ class ChoiceMemoryPolicy(nn.Module):
             self.reset(episode_id)
         elif self.episode_id != episode_id:
             raise ValueError("A new episode requires an explicit reset; refusing history leakage")
-        timestep = self.query_timestep * self.config.execute_prefix if timestep is None else timestep
+        # The native runtime still validates real environment steps. Original
+        # MemoryVLA uses query count, not those steps, for memory position encoding.
+        if self.config.inference_timestep_mode == "query":
+            timestep = self.query_timestep
+        elif timestep is None:
+            timestep = self.query_timestep * self.config.execute_prefix
         cognition, perception = self.read_features([images], [instruction], [episode_id], [timestep])
         self.query_timestep += 1
         return self.action_head.predict(cognition, perception)

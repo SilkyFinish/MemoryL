@@ -9,6 +9,7 @@ the official 2500-seed expert-validation pool, never 50 raw attempts.
 from contextlib import redirect_stdout
 from dataclasses import replace
 import io
+import hashlib
 import json
 from pathlib import Path
 import socket
@@ -23,6 +24,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import eval_multitask
 import run_training_job
+import train_multitask
 
 
 TASK_NAMES = (
@@ -58,8 +60,13 @@ class TrainingJobTests(unittest.TestCase):
         self.job_root = self.root / "job"
         self.eval_root = self.root / "evaluation"
         self.plan_path = self.root / "frozen.json"
-        self.contract = {"config": {"model_revision": "frozen-revision", "model_source": str(self.root / "model")}}
+        self.manifest = {
+            "manifest_sha256": "a" * 64, "protocol": {"image_size": [224, 224]},
+            "normalization": {"training_episode_ids": ["fixture-episode"], "action": {"q01": [-1.0] * 14, "q99": [1.0] * 14}},
+        }
+        (self.root / "manifest.json").write_text(json.dumps(self.manifest))
         self.plan = self.write_plan()
+        self.contract = self.make_contract(self.plan.training_command)
 
     def build_command(self, gpu_ids=ALLOCATED_GPUS, accumulation=None, extra=(), run_dir=None, **overrides):
         if accumulation is None:
@@ -73,7 +80,11 @@ class TrainingJobTests(unittest.TestCase):
         return [
             sys.executable, "-m", "torch.distributed.run",
             "--nproc-per-node", str(len(gpu_ids)), "--master-port", "18990",
-            str(eval_multitask.PROJECT_ROOT / "train_multitask.py"),
+            str(run_training_job.PROJECT_ROOT / "train_multitask.py"),
+            "--backbone", "qwen35", "--optimization-recipe", "qwen-legacy",
+            "--history-sampling", "sequential", "--no-image-aug",
+            "--repeated-diffusion-steps", "1", "--mask-padding-loss", "--inference-timestep-mode", "action",
+            "--cameras", "head_camera", "left_camera", "right_camera",
             "--data-root", str(self.root / "data"), "--manifest", str(self.root / "manifest.json"),
             "--run-dir", str(run_dir or self.run_dir), "--tasks", *TASK_NAMES,
             "--model-path", str(self.root / "model"), "--model-revision", "frozen-revision",
@@ -93,6 +104,28 @@ class TrainingJobTests(unittest.TestCase):
         }
         self.plan_path.write_text(json.dumps(payload), encoding="utf-8")
         return run_training_job.TrainingJobPlan.load(self.plan_path)
+
+    def make_contract(self, command):
+        command = tuple(command)
+        index = next(index for index, token in enumerate(command) if Path(token).name == "train_multitask.py")
+        args = train_multitask.build_parser().parse_args(list(command[index + 1:]))
+        config = train_multitask.build_policy_configuration(args, self.manifest).to_dict()
+        return {"config": config, "normalization": self.manifest["normalization"], "protocol": {
+            "manifest_sha256": self.manifest["manifest_sha256"], "train_episode_ids": self.manifest["normalization"]["training_episode_ids"],
+            "sampling": {"tasks": sorted(args.tasks)},
+            "optimization": {"max_steps": args.max_steps, "world_size": int(run_training_job.command_option(command, "--nproc-per-node")),
+                "global_batch_size": args.global_batch_size, "per_device_batch_size": args.per_device_batch_size,
+                "group_size": args.group_size, "grad_accumulation": args.grad_accumulation,
+                "recipe": args.optimization_recipe, "learning_rate": args.learning_rate, "weight_decay": args.weight_decay,
+                "gradient_clip_norm": args.gradient_clip_norm, "warmup_ratio": args.warmup_ratio,
+                "backbone_learning_rate": args.backbone_learning_rate if args.optimization_recipe == "qwen-legacy" else args.learning_rate,
+                "memory_head_learning_rate": args.learning_rate,
+                "minimum_backbone_learning_rate": args.minimum_backbone_learning_rate if args.optimization_recipe == "qwen-legacy" else None,
+                "minimum_head_learning_rate": args.minimum_head_learning_rate if args.optimization_recipe == "qwen-legacy" else None,
+                "training_seed": args.seed, "gradient_checkpointing": args.gradient_checkpointing,
+                "find_unused_parameters": args.find_unused_parameters,
+                "schedule": "cosine with linear warmup" if args.optimization_recipe == "qwen-legacy" else "constant"},
+        }}
 
     def allocation_config(self, gpu_ids):
         """A frozen evaluation config whose GPU/port allocation matches training."""
@@ -156,7 +189,7 @@ class TrainingJobTests(unittest.TestCase):
                     str(eval_multitask.required_accumulation(len(gpu_ids))),
                 )
         mismatched = self.build_command(ALLOCATED_GPUS, accumulation=8)
-        with self.assertRaisesRegex(ValueError, "gradient-accumulation"):
+        with self.assertRaisesRegex(ValueError, "global batch mismatch"):
             self.write_plan(ALLOCATED_GPUS, command=mismatched).validate()
 
     def test_world_sizes_that_cannot_reach_448_are_rejected(self):
@@ -168,22 +201,15 @@ class TrainingJobTests(unittest.TestCase):
                 self.assertEqual(eval_multitask.GLOBAL_BATCH_SIZE % (world_size * eval_multitask.GROUP_SIZE) != 0, True)
                 with self.assertRaisesRegex(ValueError, "global batch"):
                     eval_multitask.required_accumulation(world_size)
-                plan = run_training_job.TrainingJobPlan.__new__(run_training_job.TrainingJobPlan)
-                object.__setattr__(plan, "allowed_gpus", gpu_ids)
-                object.__setattr__(plan, "training_command", tuple(self.build_command(gpu_ids, accumulation=1)))
                 with self.assertRaisesRegex(ValueError, "global batch"):
-                    plan.validate()
+                    self.write_plan(gpu_ids, command=self.build_command(gpu_ids, accumulation=1), config=self.allocation_config(gpu_ids))
 
-    def test_activation_checkpointing_and_full_finetuning_are_required(self):
-        without_checkpointing = self.build_command(extra=["--unfreeze-backbone"])
-        with self.assertRaisesRegex(ValueError, "gradient-checkpointing"):
-            self.write_plan(command=without_checkpointing).validate()
-        without_unfreeze = self.build_command(extra=["--gradient-checkpointing"])
-        with self.assertRaisesRegex(ValueError, "unfreeze-backbone"):
-            self.write_plan(command=without_unfreeze).validate()
-        frozen_backbone = self.build_command(extra=["--gradient-checkpointing", "--freeze-backbone"])
-        with self.assertRaisesRegex(ValueError, "not a frozen backbone"):
-            self.write_plan(command=frozen_backbone).validate()
+    def test_checkpointing_and_backbone_freeze_are_explicit_options_not_qwen_requirements(self):
+        for extra in (["--unfreeze-backbone"], ["--gradient-checkpointing"], ["--freeze-backbone"]):
+            plan = self.write_plan(command=self.build_command(extra=extra))
+            plan.validate()
+        with self.assertRaises(ValueError):
+            self.write_plan(command=self.build_command(extra=["--freeze-backbone", "--unfreeze-backbone"]))
 
     def test_gpu_visibility_and_evaluation_subset_follow_allowed_gpus(self):
         payload = json.loads(self.plan_path.read_text(encoding="utf-8"))
@@ -197,16 +223,13 @@ class TrainingJobTests(unittest.TestCase):
         subset = replace(self.config, gpu_ids=(2, 6), ports=(18822, 18826))
         self.assertEqual(self.write_plan(config=subset).evaluation_config.gpu_ids, (2, 6))
 
-    def test_budget_and_schedule_changes_are_refused(self):
-        for overrides, expected in (
-            ({"--max-steps": "100"}, "30000"),
-            ({"--global-batch-size": "256"}, "Unsupported frozen budget"),
-            ({"--group-size": "8"}, "group-size"),
-        ):
-            with self.subTest(overrides=overrides):
-                command = self.build_command(**overrides)
-                with self.assertRaisesRegex(ValueError, expected):
-                    self.write_plan(command=command).validate()
+    def test_plan_budget_must_match_explicit_evaluation_gate_and_exact_batch(self):
+        with self.assertRaisesRegex(ValueError, "same frozen step budget"):
+            self.write_plan(command=self.build_command(**{"--max-steps": "100"}))
+        with self.assertRaisesRegex(ValueError, "global batch mismatch"):
+            self.write_plan(command=self.build_command(**{"--global-batch-size": "256"}))
+        with self.assertRaisesRegex(ValueError, "group size"):
+            self.write_plan(command=self.build_command(**{"--group-size": "8"}))
 
     def test_suite_plan_and_commands_freeze_500_episodes_over_2500_expert_seeds(self):
         plan = eval_multitask.build_suite_plan(self.config, self.root / "final.pt")
@@ -256,27 +279,17 @@ class TrainingJobTests(unittest.TestCase):
                 run_training_job.resolve_completed_checkpoint(plan)
             checkpoint_validator.assert_not_called()
         checkpoint = self.record_training_completion(step=55000)
-        self.contract["config"]["model_revision"] = command[command.index("--model-revision") + 1]
-        self.contract["config"]["cameras"] = ["head_camera", "left_camera", "right_camera"]
-        self.contract["normalization"] = {"training_episode_ids": ["fixture-episode"]}
-        self.contract["protocol"] = {
-            "manifest_sha256": "fixture-data-hash", "train_episode_ids": ["fixture-episode"],
-            "optimization": {"world_size": 4, "global_batch_size": 64},
-        }
-        (self.root / "manifest.json").write_text(json.dumps({
-            "normalization": self.contract["normalization"], "manifest_sha256": "fixture-data-hash",
-        }))
+        self.contract = self.make_contract(command)
         with patch.object(run_training_job, "validate_checkpoint", return_value=self.contract) as checkpoint_validator:
             self.assertEqual(run_training_job.resolve_completed_checkpoint(plan), checkpoint)
-            checkpoint_validator.assert_called_once_with(checkpoint, expected_step=55000)
+            checkpoint_validator.assert_called_once_with(checkpoint, expected_step=55000, expected_action_head="diffusion", expected_cameras=("head_camera", "left_camera", "right_camera"))
         evaluation_command = run_training_job.build_evaluation_command(plan, checkpoint)
         self.assertEqual(evaluation_command[evaluation_command.index("--expected-training-steps") + 1], "55000")
         command[command.index("--diffusion-model-type") + 1] = "DiT-S"
-        with self.assertRaisesRegex(ValueError, "DiT-L"):
-            self.write_plan(ALLOCATED_GPUS, command=command, config=config)
+        self.assertEqual(self.write_plan(ALLOCATED_GPUS, command=command, config=config).target_optimizer_steps, 55000)
         command[command.index("--diffusion-model-type") + 1] = "DiT-L"
         command[command.index("--per-device-batch-size") + 1] = "64"
-        with self.assertRaisesRegex(ValueError, "per-device batch 16"):
+        with self.assertRaisesRegex(ValueError, "group size"):
             self.write_plan(ALLOCATED_GPUS, command=command, config=config)
 
     def test_frozen_evaluation_protocol_values_are_not_configurable(self):
@@ -284,7 +297,8 @@ class TrainingJobTests(unittest.TestCase):
             replace(self.config, episodes=1),
             replace(self.config, max_seed_attempts=50),
             replace(self.config, seed=1),
-            replace(self.config, tasks=TASK_NAMES[:-1]),
+            replace(self.config, tasks=(TASK_NAMES[0], TASK_NAMES[0])),
+            replace(self.config, tasks=("unknown_native_task",)),
             replace(self.config, gpu_ids=(2, 2), ports=(18822, 18823)),
             replace(self.config, gpu_ids=(2, 3), ports=(18822, 18822)),
             replace(self.config, gpu_ids=(2, 3), ports=(19000, 19001)),
@@ -318,19 +332,10 @@ class TrainingJobTests(unittest.TestCase):
         self.assertEqual((plan.global_batch_size, plan.per_device_batch_size, plan.gradient_accumulation), (128, 16, 1))
         self.assertEqual(config.ports[-1], 18828)
         checkpoint = self.record_training_completion(step=55000)
-        self.contract["config"]["model_revision"] = command[command.index("--model-revision") + 1]
-        self.contract["config"]["cameras"] = ["head_camera", "left_camera", "right_camera"]
-        self.contract["normalization"] = {"training_episode_ids": ["fixture-episode"]}
-        self.contract["protocol"] = {
-            "manifest_sha256": "fixture-data-hash", "train_episode_ids": ["fixture-episode"],
-            "optimization": {"world_size": 8, "global_batch_size": 128},
-        }
-        (self.root / "manifest.json").write_text(json.dumps({
-            "normalization": self.contract["normalization"], "manifest_sha256": "fixture-data-hash",
-        }))
+        self.contract = self.make_contract(command)
         with patch.object(run_training_job, "validate_checkpoint", return_value=self.contract) as checkpoint_validator:
             self.assertEqual(run_training_job.resolve_completed_checkpoint(plan), checkpoint)
-            checkpoint_validator.assert_called_once_with(checkpoint, expected_step=55000, expected_action_head="oft")
+            checkpoint_validator.assert_called_once_with(checkpoint, expected_step=55000, expected_action_head="oft", expected_cameras=("head_camera", "left_camera", "right_camera"))
         evaluation_command = run_training_job.build_evaluation_command(plan, checkpoint)
         self.assertEqual(evaluation_command[evaluation_command.index("--expected-action-head") + 1], "oft")
         self.assertEqual(evaluation_command[evaluation_command.index("--episodes") + 1], "50")
@@ -370,7 +375,7 @@ class TrainingJobTests(unittest.TestCase):
             self.record_suite_completion()
             return SimpleNamespace(pid=222, wait=lambda: 0)
 
-        def validate(checkpoint, expected_step):
+        def validate(checkpoint, expected_step, **options):
             events.append("validate_checkpoint")
             self.assertTrue(checkpoint.is_file())
             self.assertEqual(expected_step, 30000)
@@ -453,7 +458,7 @@ class TrainingJobTests(unittest.TestCase):
             validate.assert_not_called()
         self.record_training_completion()
         with patch.object(run_training_job, "validate_checkpoint", return_value={"config": {"model_revision": "wrong"}}):
-            with self.assertRaisesRegex(ValueError, "source/revision"):
+            with self.assertRaisesRegex((ValueError, KeyError), "source/revision|protocol"):
                 run_training_job.resolve_completed_checkpoint(self.plan)
 
     def test_busy_gpu_or_port_blocks_training_without_retry(self):
@@ -535,6 +540,135 @@ class TrainingJobTests(unittest.TestCase):
         self.plan_path.write_text(json.dumps(payload), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "refreeze"):
             run_training_job.validate_resume(run_training_job.TrainingJobPlan.load(self.plan_path), checkpoint)
+
+    def stage1_plan(self, steps=7, random_frozen=False):
+        import configure_training_job
+
+        source = self.root / "original-memoryvla"
+        (source / "checkpoints").mkdir(parents=True)
+        (source / "config.json").write_text(json.dumps({"model": {"model_id": "original-prismatic"}}))
+        (source / "checkpoints/latest-checkpoint.pt").write_bytes(b"CPU metadata fixture, never loaded")
+        extra = []
+        if random_frozen:
+            metadata = self.root / "llama-metadata"
+            metadata.mkdir()
+            for name, payload in {"config.json": {"model_type": "llama"}, "tokenizer_config.json": {}, "tokenizer.json": {}}.items():
+                (metadata / name).write_text(json.dumps(payload))
+            source = self.root / "metadata-manifest.json"
+            source.write_text(json.dumps({"llama_metadata": {"path": str(metadata), "files": {
+                path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in metadata.iterdir()
+            }}}))
+            extra = ["--backbone-initialization", "random-frozen-debug", "--backbone-initialization-seed", "123", "--freeze-backbone"]
+        arguments = configure_training_job.build_parser().parse_args([
+            "--run-name", "new-stage1", "--model-path", str(source), "--max-steps", str(steps),
+            "--data-root", str(self.root / "native"), "--manifest", str(self.root / "manifest.json"),
+            "--gpu-ids", "2", "6", "--tasks", "press_button",
+            "--run-dir", str(self.run_dir), "--job-root", str(self.job_root), "--eval-root", str(self.eval_root), *extra,
+        ])
+        payload = configure_training_job.build_stage1_plan(arguments)
+        self.plan_path.write_text(json.dumps(payload))
+        self.plan = run_training_job.TrainingJobPlan.load(self.plan_path)
+        self.contract = self.make_contract(self.plan.training_command)
+        if random_frozen:
+            self.contract["protocol"]["optimization"].update(master_dtype="float32", frozen_backbone_dtype="bfloat16", autocast_dtype="bfloat16")
+        return self.plan
+
+    def test_stage1_training_only_completes_once_without_launching_evaluation(self):
+        self.stage1_plan()
+        self.prepare()
+
+        def finish():
+            self.record_training_completion(step=7)
+            return 0
+
+        with patch.object(run_training_job, "check_gpu_utilization"), \
+                patch.object(run_training_job, "check_port_free"), \
+                patch.object(run_training_job, "stop_owned_process"), \
+                patch.object(run_training_job, "validate_checkpoint", return_value=self.contract) as gate, \
+                patch.object(run_training_job.subprocess, "Popen", return_value=SimpleNamespace(pid=123, wait=finish)) as launch:
+            self.assertEqual(run_training_job.run_job(self.plan), 0)
+        launch.assert_called_once()
+        gate.assert_called_once()
+        self.assertEqual(launch.call_args.kwargs["cwd"], run_training_job.PROJECT_ROOT)
+        status = eval_multitask.read_json(self.job_root / "status.json")
+        self.assertEqual(status["state"], "completed")
+        self.assertEqual(status["requested_evaluation_episodes"], 0)
+        self.assertFalse(status["evaluation_started"])
+        self.assertFalse(self.eval_root.exists())
+
+    def test_debug_plan_uses_explicit_training_only_checkpoint_gate_and_same_budget(self):
+        plan = self.stage1_plan(steps=3, random_frozen=True)
+        checkpoint = self.record_training_completion(step=3)
+        with patch.object(run_training_job, "validate_checkpoint", return_value=self.contract) as gate:
+            self.assertEqual(run_training_job.resolve_completed_checkpoint(plan), checkpoint)
+            gate.assert_called_once_with(checkpoint, expected_step=3, expected_action_head="diffusion",
+                                         expected_cameras=("head_camera",), allow_debug_checkpoint=True)
+            self.contract["protocol"]["optimization"]["frozen_backbone_dtype"] = "float32"
+            with self.assertRaisesRegex(ValueError, "optimization/batch"):
+                run_training_job.resolve_completed_checkpoint(plan)
+        self.record_training_completion(step=1, status="stopped")
+        with patch.object(run_training_job, "validate_checkpoint") as gate:
+            with self.assertRaisesRegex(ValueError, "exactly 3"):
+                run_training_job.resolve_completed_checkpoint(plan)
+            gate.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "training-only"):
+            replace(plan, evaluation_config=self.config).validate()
+
+    def test_pretrained_completion_legacy_new_field_defaults_remain_strict(self):
+        plan = self.stage1_plan()
+        checkpoint = self.record_training_completion(step=7)
+        for field in train_multitask.INITIALIZATION_DEFAULTS:
+            self.contract["config"].pop(field)
+        with patch.object(run_training_job, "validate_checkpoint", return_value=self.contract) as gate:
+            self.assertEqual(run_training_job.resolve_completed_checkpoint(plan), checkpoint)
+            gate.assert_called_once_with(checkpoint, expected_step=7, expected_action_head="diffusion", expected_cameras=("head_camera",))
+            self.contract["config"]["backbone_initialization"] = "random-frozen-debug"
+            with self.assertRaisesRegex(ValueError, "configuration"):
+                run_training_job.resolve_completed_checkpoint(plan)
+
+    def test_stage1_final_checkpoint_must_match_frozen_method_manifest_and_optimizer(self):
+        plan = self.stage1_plan()
+        self.record_training_completion(step=7)
+        with patch.object(run_training_job, "validate_checkpoint", return_value=self.contract):
+            run_training_job.resolve_completed_checkpoint(plan)
+            self.contract["config"]["mask_padding_loss"] = True
+            with self.assertRaisesRegex(ValueError, "configuration"):
+                run_training_job.resolve_completed_checkpoint(plan)
+            self.contract["config"]["mask_padding_loss"] = False
+            self.contract["protocol"]["optimization"]["global_batch_size"] = 448
+            with self.assertRaisesRegex(ValueError, "optimization/batch"):
+                run_training_job.resolve_completed_checkpoint(plan)
+
+    def test_old_training_code_and_outputs_are_rejected_without_rewriting_plan(self):
+        plan = self.stage1_plan()
+        payload = json.loads(self.plan_path.read_text())
+        command = payload["training_command"]
+        script_index = command.index(str(run_training_job.PROJECT_ROOT / "train_multitask.py"))
+        command[script_index] = "/mnt/data/dylan/d2/memory/TTTchoiceMem/train_multitask.py"
+        self.plan_path.write_text(json.dumps(payload))
+        original = self.plan_path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "another checkout"):
+            run_training_job.TrainingJobPlan.load(self.plan_path)
+        self.assertEqual(self.plan_path.read_bytes(), original)
+        command[script_index] = str(run_training_job.PROJECT_ROOT / "train_multitask.py")
+        command[command.index("--run-dir") + 1] = "/mnt/data/dylan/d2/memory/TTTchoiceMem/runs/forbidden-stage1"
+        payload["run_dir"] = command[command.index("--run-dir") + 1]
+        self.plan_path.write_text(json.dumps(payload))
+        with self.assertRaisesRegex(ValueError, "another TTTchoiceMem|original memory"):
+            run_training_job.TrainingJobPlan.load(self.plan_path)
+        for path in (plan.job_root, plan.run_dir, plan.eval_root):
+            self.assertFalse(path.exists())
+
+    def test_stage1_job_dry_run_has_no_torch_subprocess_or_outputs(self):
+        self.stage1_plan()
+        with patch.object(run_training_job.subprocess, "Popen") as launch, \
+                patch.object(run_training_job, "check_gpu_utilization") as gpu_check, redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(run_training_job.main(["--plan", str(self.plan_path), "--dry-run"]), 0)
+        launch.assert_not_called()
+        gpu_check.assert_not_called()
+        self.assertIn('"evaluation": null', output.getvalue())
+        for path in (self.job_root, self.run_dir, self.eval_root):
+            self.assertFalse(path.exists())
 
     # --------------------------------------------------------------- summaries
 
@@ -645,7 +779,7 @@ class TrainingJobTests(unittest.TestCase):
             return {"task_name": task_name, "coverage_complete": True, "completed_episodes": 50,
                     "native_official_success_rate": 0.5}
 
-        with patch.object(eval_multitask, "validate_checkpoint", return_value={}), \
+        with patch.object(eval_multitask, "validate_checkpoint", return_value={"config": {"horizon": 16, "execute_prefix": 4}}), \
                 patch.object(eval_multitask, "check_gpu_utilization"), \
                 patch.object(eval_multitask, "check_port_free"), \
                 patch.object(eval_multitask, "run_task", side_effect=native_task):
@@ -690,18 +824,20 @@ class TrainingJobTests(unittest.TestCase):
         self.assertIn("TimeoutError", " ".join(result["problems"]))
 
     def test_checkpoint_gate_rejects_wrong_step_and_partial_model(self):
+        import torch
+
         checkpoint = self.root / "fixture.pt"
         checkpoint.write_bytes(b"CPU metadata fixture")
         payload = {
-            "step": 30000, "config": {"backbone": "qwen35", "action_head": "diffusion", "freeze_backbone": False,
+            "schema": "choice-memory-rmbench-v1", "step": 30000, "config": {"backbone": "qwen35", "action_head": "diffusion", "freeze_backbone": False,
                                       "dtype": "bfloat16", "horizon": 16, "execute_prefix": 4, "group_size": 16,
                                       "cameras": ["head_camera", "left_camera", "right_camera"]},
             "protocol": {"cameras": ["head_camera", "left_camera", "right_camera"]},
-            "normalization": {}, "model": {component + "weight": object() for component in
+            "normalization": {}, "model": {component + "weight": torch.ones(1) for component in
                 ("backbone.", "action_head.", "per_compr.", "cog_mem_bank.", "per_mem_bank.")},
         }
         reader = Mock(return_value=payload)
-        with patch.dict(sys.modules, {"choice_mem.checkpoint": SimpleNamespace(read_checkpoint=reader)}):
+        with patch.dict(sys.modules, {"choice_mem.checkpoint": SimpleNamespace(CHECKPOINT_SCHEMA="choice-memory-rmbench-v2", LEGACY_CHECKPOINT_SCHEMA="choice-memory-rmbench-v1", read_checkpoint=reader)}):
             self.assertEqual(eval_multitask.validate_checkpoint(checkpoint)["step"], 30000)
             payload["step"] = 29999
             with self.assertRaisesRegex(ValueError, "step"):
@@ -718,7 +854,7 @@ class TrainingJobTests(unittest.TestCase):
         checkpoint = self.root / "oft-fixture.pt"
         checkpoint.write_bytes(b"CPU metadata fixture")
         configuration = PolicyConfig(
-            action_head="oft", freeze_backbone=False, group_size=16,
+            backbone="qwen35", model_source=str(self.root / "model"), action_head="oft", freeze_backbone=False, group_size=16,
             model_revision="2fc06364715b967f1860aea9cf38778875588b17",
         ).to_dict()
         optimization = {
@@ -727,12 +863,12 @@ class TrainingJobTests(unittest.TestCase):
             "master_dtype": "float32", "autocast_dtype": "bfloat16", "gradient_checkpointing": True,
         }
         payload = {
-            "step": 55000, "config": configuration,
+            "schema": "choice-memory-rmbench-v1", "step": 55000, "config": configuration,
             "protocol": {"optimization": optimization, "cameras": configuration["cameras"]},
             "normalization": {}, "model": {component + "weight": torch.ones(1) for component in
                 ("backbone.", "action_head.", "per_compr.", "cog_mem_bank.", "per_mem_bank.")},
         }
-        with patch.dict(sys.modules, {"choice_mem.checkpoint": SimpleNamespace(read_checkpoint=lambda path: payload)}):
+        with patch.dict(sys.modules, {"choice_mem.checkpoint": SimpleNamespace(CHECKPOINT_SCHEMA="choice-memory-rmbench-v2", LEGACY_CHECKPOINT_SCHEMA="choice-memory-rmbench-v1", read_checkpoint=lambda path: payload)}):
             self.assertEqual(eval_multitask.validate_checkpoint(checkpoint, 55000, "oft")["step"], 55000)
             with self.assertRaisesRegex(ValueError, "action_head"):
                 eval_multitask.validate_checkpoint(checkpoint, 55000)

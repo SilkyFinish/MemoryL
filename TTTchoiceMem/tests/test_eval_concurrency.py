@@ -1,6 +1,7 @@
 """CPU-only scheduling/journal regressions; never start a GPU or simulator."""
 
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 import random
@@ -157,8 +158,9 @@ def test_native_case_seed_boundaries_and_dry_run_never_load_simulator(config, tm
 
 
 def test_suite_forwards_nondefault_camera_head_and_step_before_concurrent_startup(config, tmp_path):
-    config = replace(config, expected_cameras=("head_camera",), expected_action_head="oft", expected_training_steps=55000)
-    contract = {"fixture": True}
+    config = replace(config, expected_cameras=("head_camera",), expected_action_head="oft", expected_training_steps=55000,
+                     expected_backbone="memoryvla")
+    contract = {"fixture": True, "config": {"horizon": 16, "execute_prefix": 4}}
     expected_summary = {"state": "completed"}
     with patch.object(evaluation, "validate_checkpoint", return_value=contract) as checkpoint_check, \
             patch.object(concurrency, "run_concurrent_suite", return_value=expected_summary) as concurrent_suite, \
@@ -168,6 +170,7 @@ def test_suite_forwards_nondefault_camera_head_and_step_before_concurrent_startu
         assert evaluation.run_suite(config, tmp_path / "checkpoint.pt", tmp_path / "evaluation") is expected_summary
     checkpoint_check.assert_called_once_with(
         tmp_path / "checkpoint.pt", expected_step=55000, expected_action_head="oft", expected_cameras=("head_camera",),
+        expected_backbone="memoryvla",
     )
     concurrent_suite.assert_called_once_with(config, tmp_path / "checkpoint.pt", tmp_path / "evaluation", contract)
     legacy_gpu_check.assert_not_called()
@@ -337,7 +340,9 @@ def test_gpu_gate_checks_utilization_and_headroom_once_for_all_replicas(config):
                 concurrency.check_gpu_headroom(replace(config, gpu_ids=(0,), ports=config.ports[:3]))
 
 
-def test_mocked_24_worker_suite_has_persistent_servers_and_500_exact_episodes(config, tmp_path):
+@pytest.mark.parametrize("tasks", [TASK_NAMES, (TASK_NAMES[1], TASK_NAMES[3])])
+def test_mocked_24_worker_suite_has_persistent_servers_and_exact_selected_episodes(config, tmp_path, tasks):
+    config = replace(config, tasks=tasks)
     output_root = tmp_path / "evaluation"
     lock = threading.Lock()
     active_slots = set()
@@ -373,7 +378,7 @@ def test_mocked_24_worker_suite_has_persistent_servers_and_500_exact_episodes(co
             active_slots.remove(slot.name)
         return result
 
-    with patch.object(evaluation, "validate_checkpoint", return_value={}) as checkpoint_check, \
+    with patch.object(evaluation, "validate_checkpoint", return_value={"config": {"horizon": 16, "execute_prefix": 4}}) as checkpoint_check, \
             patch.object(concurrency, "check_gpu_headroom", return_value={}) as gpu_check, \
             patch.object(evaluation, "check_gpu_utilization") as legacy_gpu_check, \
             patch.object(evaluation, "check_port_free") as ports, \
@@ -383,7 +388,10 @@ def test_mocked_24_worker_suite_has_persistent_servers_and_500_exact_episodes(co
             patch.object(concurrency, "run_candidate", side_effect=native_candidate):
         summary = evaluation.run_suite(config, tmp_path / "checkpoint.pt", output_root)
     assert summary["state"] == "completed"
-    assert summary["completed_episodes"] == 500
+    assert summary["requested_episodes"] == summary["completed_episodes"] == len(tasks) * 50
+    assert summary["native_official_equal_task_success_rate"] == (
+        sum(result["native_official_success_rate"] for result in summary["tasks"]) / len(tasks)
+    )
     assert maximum_concurrency == 24
     assert len(servers) == readiness.call_count == cleanup.call_count == ports.call_count == 24
     assert len({call.args[2] for call in readiness.call_args_list}) == 24
@@ -409,7 +417,7 @@ def test_server_startup_failure_launches_no_native_candidates_and_cleans_owned(c
         owned.append(process)
         return process
 
-    with patch.object(evaluation, "validate_checkpoint", return_value={}), \
+    with patch.object(evaluation, "validate_checkpoint", return_value={"config": {"horizon": 16, "execute_prefix": 4}}), \
             patch.object(concurrency, "check_gpu_headroom", return_value={}), \
             patch.object(evaluation, "check_port_free"), \
             patch.object(evaluation, "wait_for_server", side_effect=TimeoutError("not ready")), \
@@ -463,7 +471,7 @@ def checkpoint_payload(tmp_path, head, world_size):
         "oft_hidden_dim": 256 if head == "oft" else 987,
     }
     return {
-        "step": 55000, "config": configuration,
+        "schema": "choice-memory-rmbench-v1", "step": 55000, "config": configuration,
         "protocol": {"cameras": ["head_camera"], "optimization": {
             "max_steps": 55000, "world_size": world_size, "per_device_batch_size": 16,
             "global_batch_size": world_size * 16, "grad_accumulation": 1, "groups_per_forward": 1,
@@ -510,3 +518,412 @@ def test_checkpoint_still_enforces_active_head_hashes_and_finiteness(tmp_path):
         with patch("choice_mem.data.hash_file", return_value="changed-hash"):
             with pytest.raises(ValueError, match="source asset changed"):
                 evaluation.validate_checkpoint(checkpoint, 55000)
+
+
+def test_selected_tasks_default_and_positive_training_budget(config):
+    assert evaluation.DEFAULT_RMBENCH_ROOT == Path("/mnt/data/dylan/d2/memory/RMBench")
+    selected = replace(config, tasks=(TASK_NAMES[3], TASK_NAMES[0]), expected_training_steps=17,
+                       expected_action_head="oft", expected_backbone="memoryvla")
+    selected.validate()
+    assert evaluation.EvaluationConfig.from_dict(selected.to_dict()).tasks == selected.tasks
+    serialized = selected.to_dict()
+    serialized.pop("tasks")
+    assert evaluation.EvaluationConfig.from_dict(serialized).tasks == TASK_NAMES
+    serialized["tasks"] = None
+    assert evaluation.EvaluationConfig.from_dict(serialized).tasks == TASK_NAMES
+    for tasks in ((), (TASK_NAMES[0], TASK_NAMES[0]), ("not_an_official_task",), "battery_try"):
+        with pytest.raises(ValueError):
+            replace(config, tasks=tasks).validate()
+    for step in (0, -1, True, 17.0):
+        with pytest.raises(ValueError, match="positive integer"):
+            replace(config, expected_training_steps=step).validate()
+    with pytest.raises(ValueError, match="backbone"):
+        replace(config, expected_backbone="other").validate()
+
+
+def test_policy_python_alias_and_stage1_subset_dry_run_are_cpu_only(config, tmp_path, capsys):
+    arguments = [
+        "--checkpoint", str(tmp_path / "unused.pt"), "--eval-root", str(tmp_path / "evaluation"),
+        "--rmbench-root", str(config.rmbench_root), "--policy-python", sys.executable,
+        "--env-python", sys.executable, "--tasks", TASK_NAMES[3], TASK_NAMES[0],
+        "--expected-training-steps", "17", "--expected-backbone", "memoryvla", "--dry-run",
+    ]
+    assert evaluation.parse_args(arguments).qwen_python == Path(sys.executable)
+    legacy_alias = ["--qwen-python" if argument == "--policy-python" else argument for argument in arguments]
+    assert vars(evaluation.parse_args(legacy_alias)) == vars(evaluation.parse_args(arguments))
+    for step in ("0", "-1", "1.5"):
+        invalid = [step if argument == "17" else argument for argument in arguments]
+        with pytest.raises(SystemExit):
+            evaluation.parse_args(invalid)
+    with patch.object(evaluation, "validate_checkpoint") as checkpoint_check, \
+            patch.object(evaluation, "run_native_child") as child, \
+            patch.object(evaluation.subprocess, "Popen") as launch, \
+            patch.object(evaluation.subprocess, "run") as command:
+        assert evaluation.main(arguments) == 0
+    for operation in (checkpoint_check, child, launch, command):
+        operation.assert_not_called()
+    output = capsys.readouterr().out
+    assert '"total_requested_episodes": 100' in output
+    assert output.count("serve_rmbench.py") == output.count("--native-child") == 2
+    assert not (tmp_path / "evaluation").exists()
+
+
+@pytest.fixture
+def stage1_payload(tmp_path):
+    """A tiny real v2 CPU checkpoint, not a mocked-away schema reader."""
+    from choice_mem.config import PolicyConfig
+    from choice_mem.data import hash_file
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "config.json").write_text("{}", encoding="utf-8")
+    configuration = PolicyConfig(
+        model_source=str(source), model_revision="local-sha256", group_size=8,
+        mem_length=8, per_token_size=32, dtype="float32", freeze_backbone=True,
+        asset_manifest={"config.json": hash_file(source / "config.json")},
+    ).to_dict()
+    normalization = {
+        "action": {"q01": [0.0] * 14, "q99": [1.0] * 14},
+        "training_episode_ids": ["train-a", "train-b"], "action_dim": 14, "target_offset": 1,
+    }
+    return {
+        "schema": "choice-memory-rmbench-v2", "step": 17, "config": configuration,
+        "normalization": normalization,
+        "model": {component + "weight": torch.zeros(1) for component in (
+            "backbone.", "action_head.", "per_compr.", "cog_mem_bank.", "per_mem_bank.",
+        )},
+        "protocol": {
+            **{field: configuration[field] for field in (
+                "cameras", "action_dim", "horizon", "execute_prefix", "group_size", "image_size",
+                "history_sampling", "image_aug", "repeated_diffusion_steps", "mask_padding_loss", "inference_timestep_mode",
+            )},
+            "trainer": "choice-memory-multitask-training-v2", "target_offset": 1,
+            "manifest_sha256": "a" * 64,
+            "train_episode_ids": ["train-a", "train-b"], "validation_episode_ids": ["validation-a"],
+            "requested_configuration": {**configuration, "model_revision": None, "asset_manifest": {}},
+            "sampling": {
+                "tasks": [TASK_NAMES[0], TASK_NAMES[1]], "history_sampling": "random",
+                "per_task": {TASK_NAMES[0]: {"train_episodes": 1, "validation_episodes": 1},
+                             TASK_NAMES[1]: {"train_episodes": 1, "validation_episodes": 0}},
+            },
+            "optimization": {
+                "optimizer": "AdamW", "recipe": "memoryvla", "max_steps": 17,
+                "world_size": 2, "group_size": 8, "per_device_batch_size": 16,
+                "groups_per_forward": 2, "grad_accumulation": 3, "global_batch_size": 96,
+                "master_dtype": "float32", "autocast_dtype": "float32",
+                "learning_rate": 2e-5, "backbone_learning_rate": 2e-5, "memory_head_learning_rate": 2e-5,
+                "weight_decay": 0, "gradient_clip_norm": 1, "warmup_ratio": 0, "schedule": "constant",
+                "minimum_backbone_learning_rate": None, "minimum_head_learning_rate": None,
+            },
+        },
+    }
+
+
+@pytest.fixture
+def debug_payload(stage1_payload, tmp_path):
+    from choice_mem.random_init import inspect_random_backbone_assets
+
+    metadata = tmp_path / "llama-metadata"
+    metadata.mkdir()
+    files = {}
+    for name, value in {
+        "config.json": {"model_type": "llama"},
+        "tokenizer_config.json": {"tokenizer_class": "LlamaTokenizerFast"},
+        "tokenizer.json": {},
+    }.items():
+        content = json.dumps(value).encode()
+        (metadata / name).write_bytes(content)
+        files[name] = hashlib.sha256(content).hexdigest()
+    source = tmp_path / "metadata-source.json"
+    source.write_text(json.dumps({
+        "llama_metadata": {"path": str(metadata), "files": files},
+        # These paths deliberately do not exist: none is a dependency of random init.
+        "checkpoint_path": str(tmp_path / "must-not-read-33GB.pt"), "checkpoint_sha256": "b" * 64,
+        "local_vision_files": {"vision": str(tmp_path / "must-not-read-vision.bin")},
+    }))
+    configuration = stage1_payload["config"]
+    configuration.update(
+        backbone_initialization="random-frozen-debug", backbone_initialization_seed=73,
+        base_vlm_id="prism-dinosiglip-224px+7b", dtype="bfloat16", freeze_backbone=True,
+        model_source=str(source), asset_manifest=inspect_random_backbone_assets(source)["asset_manifest"],
+    )
+    for name in ("backbone_initialization", "backbone_initialization_seed", "base_vlm_id"):
+        stage1_payload["protocol"][name] = configuration[name]
+    stage1_payload["protocol"]["requested_configuration"] = {**configuration, "asset_manifest": {}}
+    stage1_payload["protocol"]["optimization"].update(autocast_dtype="bfloat16", frozen_backbone_dtype="bfloat16")
+    stage1_payload["model"]["backbone.weight"] = torch.zeros(1, dtype=torch.bfloat16)
+    return stage1_payload
+
+
+def test_debug_gate_requires_explicit_opt_in_and_checks_metadata_only(debug_payload, tmp_path):
+    checkpoint = tmp_path / "debug.pt"
+    torch.save(debug_payload, checkpoint)
+    with pytest.raises(ValueError, match="explicit allow_debug_checkpoint"):
+        evaluation.validate_checkpoint(checkpoint, 17)
+    with patch("choice_mem.data.hash_file", side_effect=AssertionError("No pretrained weight hashing")), \
+            patch("choice_mem.checkpoint.ChoiceMemoryPolicy", side_effect=AssertionError("No model loading")), \
+            patch.object(torch.cuda, "_lazy_init", side_effect=AssertionError("No GPU")):
+        # Sixth positional parameter is the new optional opt-in; first five are unchanged.
+        contract = evaluation.validate_checkpoint(checkpoint, 17, "diffusion", ("head_camera",), "memoryvla", True)
+    assert contract["config"]["backbone_initialization"] == "random-frozen-debug"
+    assert "checkpoint" not in contract["config"]["asset_manifest"]
+    assert contract["config"]["asset_manifest"]["manifest"] != "b" * 64
+    with pytest.raises(ValueError, match="explicit allow_debug_checkpoint"):
+        evaluation.validate_checkpoint(checkpoint, 17, allow_debug_checkpoint="true")
+
+
+@pytest.mark.parametrize("mutation,reason", [
+    (lambda p: p["model"].update({"backbone.weight": torch.zeros(1)}), "non-BF16"),
+    (lambda p: p["model"].update({"backbone.weight": torch.zeros(1, dtype=torch.float16)}), "non-BF16"),
+    (lambda p: p["model"].update({"per_compr.weight": torch.zeros(1, dtype=torch.bfloat16)}), "non-FP32"),
+    (lambda p: p["model"].update({"cog_mem_bank.weight": torch.zeros(1, dtype=torch.bfloat16)}), "non-FP32"),
+    (lambda p: p["model"].update({"per_mem_bank.weight": torch.zeros(1, dtype=torch.bfloat16)}), "non-FP32"),
+    (lambda p: p["model"].update({"action_head.weight": torch.zeros(1, dtype=torch.bfloat16)}), "non-FP32"),
+    (lambda p: p["model"]["backbone.weight"].fill_(float("nan")), "nonfinite"),
+    (lambda p: p["model"]["action_head.weight"].fill_(float("inf")), "nonfinite"),
+    (lambda p: p["model"].pop("backbone.weight"), "component"),
+    (lambda p: p.update(step=16), "step"),
+    (lambda p: p["protocol"]["optimization"].update(max_steps=18), "max_steps"),
+    (lambda p: p["protocol"]["optimization"].update(master_dtype="bfloat16"), "dtype"),
+    (lambda p: p["protocol"]["optimization"].pop("frozen_backbone_dtype"), "frozen_backbone_dtype"),
+    (lambda p: p["protocol"].update(backbone_initialization_seed=42), "backbone_initialization_seed"),
+    (lambda p: p["protocol"].pop("backbone_initialization"), "missing field"),
+    (lambda p: p["protocol"]["requested_configuration"].pop("backbone_initialization_seed"), "missing field"),
+    (lambda p: p["protocol"]["requested_configuration"].update(dtype="float32"), "dtype"),
+    (lambda p: p["protocol"].update(manifest_sha256="bad"), "manifest_sha256"),
+    (lambda p: p["normalization"].update(training_episode_ids=["validation-a"]), "normalization"),
+    (lambda p: p["config"]["asset_manifest"].update(checkpoint="b" * 64), "asset_manifest"),
+])
+def test_debug_gate_retains_precision_provenance_and_completed_budget_checks(debug_payload, tmp_path, mutation, reason):
+    mutation(debug_payload)
+    checkpoint = tmp_path / "bad-debug.pt"
+    torch.save(debug_payload, checkpoint)
+    with pytest.raises(ValueError, match=reason):
+        evaluation.validate_checkpoint(checkpoint, 17, allow_debug_checkpoint=True)
+
+
+def test_debug_metadata_change_and_resumable_position_still_fail(debug_payload, tmp_path):
+    checkpoint = tmp_path / "debug.pt"
+    debug_payload["optimizer"] = {"state": {}, "param_groups": []}
+    debug_payload["training_state"] = {
+        "schema": "choice-memory-multitask-training-v2", "sampler": debug_payload["protocol"]["sampling"],
+        "scheduler": {"schedule": "constant", "total_steps": 17, "completed_steps": 17},
+        "rank_rng_states": [{}, {}], "next_global_micro_index": 102, "next_global_group_index": 204,
+    }
+    torch.save(debug_payload, checkpoint)
+    assert evaluation.validate_checkpoint(checkpoint, 17, allow_debug_checkpoint=True)["step"] == 17
+    for field, value in (("rank_rng_states", [{}]), ("next_global_micro_index", 101), ("next_global_group_index", 203)):
+        original = debug_payload["training_state"][field]
+        debug_payload["training_state"][field] = value
+        torch.save(debug_payload, checkpoint)
+        with pytest.raises(ValueError, match="sampler/optimizer"):
+            evaluation.validate_checkpoint(checkpoint, 17, allow_debug_checkpoint=True)
+        debug_payload["training_state"][field] = original
+    torch.save(debug_payload, checkpoint)
+    (tmp_path / "llama-metadata" / "tokenizer.json").write_text('{"changed": true}')
+    with pytest.raises(ValueError, match="SHA256"):
+        evaluation.validate_checkpoint(checkpoint, 17, allow_debug_checkpoint=True)
+
+
+def test_official_suite_cannot_opt_in_to_debug_metrics(debug_payload, config, tmp_path):
+    checkpoint = tmp_path / "debug.pt"
+    torch.save(debug_payload, checkpoint)
+    official = replace(config, expected_training_steps=17)
+    with patch.object(evaluation, "check_gpu_utilization") as gpu, \
+            patch.object(concurrency, "check_gpu_headroom") as headroom, \
+            patch.object(evaluation.subprocess, "Popen") as launch:
+        with pytest.raises(ValueError, match="explicit allow_debug_checkpoint"):
+            evaluation.run_suite(official, checkpoint, tmp_path / "official")
+    for operation in (gpu, headroom, launch):
+        operation.assert_not_called()
+    assert "--allow-debug-checkpoint" not in evaluation.build_server_command(official, checkpoint, official.ports[0])
+    assert not (tmp_path / "official").exists()
+
+
+def test_historical_v2_missing_initialization_fields_keep_strict_fp32_gate(stage1_payload, tmp_path):
+    for section in (stage1_payload["config"], stage1_payload["protocol"]["requested_configuration"]):
+        for field in ("backbone_initialization", "backbone_initialization_seed", "base_vlm_id"):
+            section.pop(field, None)
+    checkpoint = tmp_path / "old-v2.pt"
+    torch.save(stage1_payload, checkpoint)
+    assert evaluation.validate_checkpoint(checkpoint, 17)["config"]["backbone_initialization"] == "pretrained"
+    stage1_payload["model"]["backbone.weight"] = torch.zeros(1, dtype=torch.bfloat16)
+    torch.save(stage1_payload, checkpoint)
+    for opt_in in (False, True):
+        with pytest.raises(ValueError, match="non-FP32"):
+            evaluation.validate_checkpoint(checkpoint, 17, allow_debug_checkpoint=opt_in)
+
+
+@pytest.mark.parametrize("backbone", ["memoryvla", "qwen35"])
+@pytest.mark.parametrize("head", ["diffusion", "oft"])
+@pytest.mark.parametrize("freeze_backbone", [False, True])
+def test_stage1_completed_snapshot_accepts_saved_method_without_qwen_budget(
+    stage1_payload, tmp_path, backbone, head, freeze_backbone,
+):
+    payload = stage1_payload
+    payload["config"].update(backbone=backbone, action_head=head, freeze_backbone=freeze_backbone)
+    payload["protocol"]["requested_configuration"].update(
+        backbone=backbone, action_head=head, freeze_backbone=freeze_backbone,
+    )
+    checkpoint = tmp_path / "final.pt"
+    torch.save(payload, checkpoint)
+    with patch("choice_mem.checkpoint.ChoiceMemoryPolicy", side_effect=AssertionError("No model loading")), \
+            patch.object(torch.cuda, "_lazy_init", side_effect=AssertionError("No GPU initialization")), \
+            patch.object(evaluation.subprocess, "Popen") as launch:
+        contract = evaluation.validate_checkpoint(checkpoint, 17, head, ("head_camera",), backbone)
+    assert contract["step"] == 17 and contract["config"]["group_size"] == 8
+    assert "training_state" not in payload and "optimizer" not in payload
+    launch.assert_not_called()
+    other_backbone = "qwen35" if backbone == "memoryvla" else "memoryvla"
+    with pytest.raises(ValueError, match="expected_backbone"):
+        evaluation.validate_checkpoint(checkpoint, 17, head, expected_backbone=other_backbone)
+
+
+@pytest.mark.parametrize("mutate,reason", [
+    (lambda p: p.update(step=16), "step"),
+    (lambda p: p["protocol"]["optimization"].update(max_steps=18), "max_steps"),
+    (lambda p: p["protocol"]["optimization"].update(global_batch_size=448), "group/batch"),
+    (lambda p: p["protocol"]["optimization"].update(group_size=16), "group/batch"),
+    (lambda p: p["protocol"]["optimization"].update(world_size=True), "positive integer"),
+    (lambda p: p["protocol"]["optimization"].update(autocast_dtype="bfloat16"), "dtype"),
+    (lambda p: p["protocol"]["optimization"].update(learning_rate=float("nan")), "learning_rate"),
+    (lambda p: p["protocol"]["optimization"].update(schedule="cosine with linear warmup"), "single-LR"),
+    (lambda p: p["protocol"].update(image_aug=False), "image_aug"),
+    (lambda p: p["protocol"].update(manifest_sha256="bad-hash"), "manifest_sha256"),
+    (lambda p: p["protocol"].update(validation_episode_ids=["train-a"]), "train/validation"),
+    (lambda p: p["normalization"].update(training_episode_ids=["validation-a"]), "normalization"),
+    (lambda p: p["normalization"]["action"]["q01"].__setitem__(0, float("nan")), "quantiles"),
+    (lambda p: p["protocol"]["sampling"].update(tasks=[]), "sampling"),
+    (lambda p: p["config"].update(freeze_backbone=False), "requested_configuration"),
+    (lambda p: p["model"].pop("per_mem_bank.weight"), "component"),
+    (lambda p: p["model"].update({"backbone.weight": torch.tensor([float("inf")])}), "nonfinite"),
+    (lambda p: p["model"].update({"action_head.weight": torch.zeros(1, dtype=torch.bfloat16)}), "non-FP32"),
+    (lambda p: p["config"].update(asset_manifest={}), "asset_manifest"),
+])
+def test_stage1_gate_rejects_incomplete_or_inconsistent_payload(stage1_payload, tmp_path, mutate, reason):
+    mutate(stage1_payload)
+    checkpoint = tmp_path / "invalid.pt"
+    torch.save(stage1_payload, checkpoint)
+    with pytest.raises(ValueError, match=reason):
+        evaluation.validate_checkpoint(checkpoint, 17)
+
+
+@pytest.mark.parametrize("expected_step", [0, -1, True, 17.0])
+def test_checkpoint_expected_budget_is_a_strict_positive_integer(tmp_path, expected_step):
+    with pytest.raises(ValueError, match="positive integer"):
+        evaluation.validate_checkpoint(tmp_path / "not-read.pt", expected_step)
+
+
+def test_stage1_resumable_checkpoint_requires_completed_scheduler_and_sampler(stage1_payload, tmp_path):
+    payload = stage1_payload
+    payload["optimizer"] = {"state": {}, "param_groups": []}
+    payload["training_state"] = {
+        "schema": "choice-memory-multitask-training-v2", "sampler": payload["protocol"]["sampling"],
+        "scheduler": {"schedule": "constant", "total_steps": 17, "completed_steps": 17, "base_rates": [2e-5]},
+        "rank_rng_states": [{}, {}], "next_global_micro_index": 102, "next_global_group_index": 204,
+    }
+    checkpoint = tmp_path / "resumable.pt"
+    torch.save(payload, checkpoint)
+    assert evaluation.validate_checkpoint(checkpoint, 17)["step"] == 17
+    for field_name, bad_value in (("completed_steps", 16), ("total_steps", 18), ("completed_steps", True)):
+        original = payload["training_state"]["scheduler"][field_name]
+        payload["training_state"]["scheduler"][field_name] = bad_value
+        torch.save(payload, checkpoint)
+        with pytest.raises(ValueError, match="training_state scheduler"):
+            evaluation.validate_checkpoint(checkpoint, 17)
+        payload["training_state"]["scheduler"][field_name] = original
+    payload["training_state"]["next_global_group_index"] += 1
+    torch.save(payload, checkpoint)
+    with pytest.raises(ValueError, match="sampler/optimizer"):
+        evaluation.validate_checkpoint(checkpoint, 17)
+
+
+@pytest.mark.parametrize("source_kind", ["pt", "json"])
+def test_stage1_memoryvla_file_asset_aliases_and_config_integrity(stage1_payload, tmp_path, source_kind):
+    from choice_mem.data import hash_file
+
+    run = tmp_path / "original-run"
+    (run / "checkpoints").mkdir(parents=True)
+    config_path = run / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    weights = run / "checkpoints/latest-checkpoint.pt"
+    weights.write_bytes(b"original source weights; never loaded")
+    source = weights
+    manifest = {"config.json": hash_file(config_path), "checkpoint": hash_file(weights)}
+    if source_kind == "json":
+        vision = run / "vision.bin"
+        vision.write_bytes(b"vision source; never loaded")
+        tokenizer = run / "tokenizer.json"
+        tokenizer.write_text("{}", encoding="utf-8")
+        source = run / "assets.json"
+        source.write_text(json.dumps({
+            "checkpoint_path": str(weights), "checkpoint_sha256": hash_file(weights),
+            "config.json": {"path": str(config_path), "sha256": hash_file(config_path)},
+            "local_vision_files": {"vision-name": str(vision)},
+            "llama_metadata": {"path": str(run), "files": {"tokenizer.json": hash_file(tokenizer)}},
+        }), encoding="utf-8")
+        manifest = {"manifest": hash_file(source), "checkpoint": hash_file(weights),
+                    "vision-name": hash_file(vision), "llama/tokenizer.json": hash_file(tokenizer)}
+    stage1_payload["config"].update(model_source=str(source), asset_manifest=manifest)
+    stage1_payload["protocol"]["requested_configuration"]["model_source"] = str(source)
+    checkpoint = tmp_path / "final.pt"
+    torch.save(stage1_payload, checkpoint)
+    assert evaluation.validate_checkpoint(checkpoint, 17)["step"] == 17
+    config_path.write_text('{"changed": true}', encoding="utf-8")
+    with pytest.raises(ValueError, match="source asset changed: config.json"):
+        evaluation.validate_checkpoint(checkpoint, 17)
+
+
+@pytest.mark.parametrize("step,head", [(30000, "diffusion"), (55000, "diffusion"), (55000, "oft")])
+def test_legacy_v1_keeps_its_frozen_gate(tmp_path, step, head):
+    checkpoint = tmp_path / "legacy.pt"
+    checkpoint.write_bytes(b"fixture")
+    payload = checkpoint_payload(tmp_path, head, 4)
+    payload["step"] = step
+    with patch("choice_mem.checkpoint.read_checkpoint", return_value=payload):
+        assert evaluation.validate_checkpoint(checkpoint, step, head)["step"] == step
+        for field_name, bad_value in (("backbone", "memoryvla"), ("freeze_backbone", True), ("group_size", 8)):
+            original = payload["config"][field_name]
+            payload["config"][field_name] = bad_value
+            with pytest.raises(ValueError, match=field_name):
+                evaluation.validate_checkpoint(checkpoint, step, head)
+            payload["config"][field_name] = original
+        payload["step"] = 17
+        with pytest.raises(ValueError, match="Legacy v1"):
+            evaluation.validate_checkpoint(checkpoint, 17, head)
+
+
+def test_v2_training_only_horizon_is_generic_but_native_rollout_gate_stays_fixed(stage1_payload, config, tmp_path):
+    for section in (stage1_payload["config"], stage1_payload["protocol"], stage1_payload["protocol"]["requested_configuration"]):
+        section.update(horizon=4, execute_prefix=2)
+    checkpoint = tmp_path / "training-only.pt"
+    torch.save(stage1_payload, checkpoint)
+    assert evaluation.validate_checkpoint(checkpoint, 17)["config"]["horizon"] == 4
+    native_config = replace(config, tasks=TASK_NAMES[:2], expected_training_steps=17)
+    with patch.object(evaluation, "check_gpu_utilization") as gpu_check, \
+            patch.object(concurrency, "check_gpu_headroom") as headroom_check, \
+            patch.object(evaluation.subprocess, "Popen") as launch:
+        with pytest.raises(ValueError, match="horizon.*native evaluation"):
+            evaluation.run_suite(native_config, checkpoint, tmp_path / "not-launched")
+    for operation in (gpu_check, headroom_check, launch):
+        operation.assert_not_called()
+    assert not (tmp_path / "not-launched").exists()
+
+
+def test_incomplete_selected_task_coverage_never_publishes_an_official_rate(config, tmp_path):
+    selected = replace(config, tasks=TASK_NAMES[:2], workers_per_gpu=1, gpu_ids=(0,), ports=(18861,))
+
+    def run_task(config, checkpoint, task_name, gpu_id, port, eval_root, update_status, cancellation):
+        complete = task_name == config.tasks[0]
+        return {"coverage_complete": complete, "completed_episodes": 50 if complete else 49,
+                "native_official_success_rate": 0.5 if complete else None}
+
+    with patch.object(evaluation, "validate_checkpoint", return_value={"config": {"horizon": 16, "execute_prefix": 4}}), \
+            patch.object(evaluation, "check_gpu_utilization"), patch.object(evaluation, "check_port_free"), \
+            patch.object(evaluation, "run_task", side_effect=run_task), \
+            patch.object(evaluation.subprocess, "Popen") as launch:
+        summary = evaluation.run_suite(selected, tmp_path / "final.pt", tmp_path / "subset")
+    launch.assert_not_called()
+    assert summary["state"] == "failed" and not summary["coverage_complete"]
+    assert summary["requested_episodes"] == 100 and summary["completed_episodes"] == 99
+    assert summary["native_official_equal_task_success_rate"] is None

@@ -365,7 +365,31 @@ class DiffusionHeadTests(unittest.TestCase):
         self.perception = torch.randn(2, 3, 12)
         self.actions = torch.randn(2, 4, 3)
         self.head.train()
+        self.head.repeated_diffusion_steps = 1
+        self.head.mask_padding_loss = True
         self.head.zero_grad(set_to_none=True)
+
+    def test_restored_repeat4_unmasked_loss_and_rng_match_original(self):
+        self.head.repeated_diffusion_steps = 4
+        self.head.mask_padding_loss = False
+        initial_rng_state = torch.get_rng_state()
+        with torch.no_grad():
+            original_loss = self.original_action_class.loss(
+                self.head.action_model,
+                self.actions.repeat(4, 1, 1),
+                self.cognition.repeat(4, 1, 1),
+                self.perception.repeat(4, 1, 1),
+            )
+            original_final_rng_state = torch.get_rng_state()
+            torch.set_rng_state(initial_rng_state)
+            # False tail flags are data metadata, not part of the original objective.
+            wrapped_loss = self.head.loss(
+                self.actions, self.cognition, self.perception, torch.zeros(2, 4, dtype=torch.bool)
+            )
+        torch.testing.assert_close(original_loss, wrapped_loss, rtol=0, atol=0)
+        self.assertTrue(torch.equal(torch.get_rng_state(), original_final_rng_state))
+        with self.assertRaisesRegex(ValueError, "finite absolute-action padding"):
+            self.head.loss(self.actions * float("nan"), self.cognition, self.perception)
 
     def test_fixed_rng_original_loss_and_full_masks_are_equivalent(self):
         initial_rng_state = torch.get_rng_state()

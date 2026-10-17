@@ -309,14 +309,15 @@ def write_task_journal(output_dir, episodes):
     (output_dir / "episodes.jsonl").write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
 
 
-def test_legacy_task_and_suite_use_actual_twenty_denominator(config20, tmp_path):
+@pytest.mark.parametrize("tasks", [TASK_NAMES, (TASK_NAMES[1], TASK_NAMES[3])])
+def test_legacy_task_and_suite_use_actual_twenty_denominator(config20, tmp_path, tasks):
     task_dir = tmp_path / "journal"
     write_task_journal(task_dir, 20)
     result = evaluation.summarize_task("fixture", task_dir, 0, episodes=20, max_seed_attempts=1000)
     assert result["coverage_complete"] and result["native_official_success_rate"] == 0.5
     assert result["requested_episodes"] == 20 and result["requested_seed_attempts"] == 1000
     assert not evaluation.summarize_task("fixture", task_dir, 0)["coverage_complete"]
-    legacy_config = replace(config20, workers_per_gpu=1, ports=evaluation.CONCURRENT_PORTS[:8])
+    legacy_config = replace(config20, tasks=tasks, workers_per_gpu=1, ports=evaluation.CONCURRENT_PORTS[:8])
 
     def run_task(config, checkpoint, task_name, gpu_id, port, eval_root, update_status, cancellation):
         write_task_journal(eval_root / task_name, config.episodes)
@@ -324,13 +325,13 @@ def test_legacy_task_and_suite_use_actual_twenty_denominator(config20, tmp_path)
             task_name, eval_root / task_name, 0, episodes=config.episodes, max_seed_attempts=config.max_seed_attempts,
         )
 
-    with patch.object(evaluation, "validate_checkpoint", return_value={}), \
+    with patch.object(evaluation, "validate_checkpoint", return_value={"config": {"horizon": 16, "execute_prefix": 4}}), \
             patch.object(evaluation, "check_gpu_utilization"), patch.object(evaluation, "check_port_free"), \
             patch.object(evaluation, "run_task", side_effect=run_task), patch.object(evaluation.subprocess, "Popen") as launch:
         summary = evaluation.run_suite(legacy_config, tmp_path / "final.pt", tmp_path / "legacy_suite")
     launch.assert_not_called()
     assert summary["state"] == "completed"
-    assert summary["requested_episodes"] == summary["completed_episodes"] == 200
+    assert summary["requested_episodes"] == summary["completed_episodes"] == len(tasks) * 20
     assert summary["native_official_equal_task_success_rate"] == 0.5
 
 
@@ -396,7 +397,7 @@ def test_mocked_24_slot_suite_runs_exactly_200_episodes(config20, tmp_path):
             active_slots.remove(slot.name)
         return result
 
-    with patch.object(evaluation, "validate_checkpoint", return_value={}) as checkpoint_check, \
+    with patch.object(evaluation, "validate_checkpoint", return_value={"config": {"horizon": 16, "execute_prefix": 4}}) as checkpoint_check, \
             patch.object(concurrency, "check_gpu_headroom", return_value={}), \
             patch.object(evaluation, "check_port_free"), patch.object(evaluation, "wait_for_server") as readiness, \
             patch.object(evaluation, "stop_owned_process") as cleanup, \

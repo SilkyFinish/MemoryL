@@ -19,7 +19,7 @@ import sys
 import traceback
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import torch
@@ -227,7 +227,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertIs(wrapper.policy, self.policy)
         self.assertEqual(wrapper.protocol["target_offset"], 1)
         self.assertEqual(wrapper.normalization["source"], "train episodes only")
-        for expected in ({"horizon": 8}, {"execute_prefix": 8}, {"cameras": list(reversed(self.policy.config.cameras))}):
+        for expected in ({"horizon": 8}, {"execute_prefix": 8}, {"cameras": ["left_camera"]}):
             with self.subTest(expected=expected), self.assertRaisesRegex(ValueError, "configuration mismatch"):
                 ModelWrapper(policy=self.policy, payload=self.payload, expected=expected)
         with self.assertRaisesRegex(ValueError, "action_type=joint"):
@@ -250,6 +250,48 @@ class RuntimeTests(unittest.TestCase):
         invalid_payload["protocol"]["gripper_indices"] = [12, 13]
         with self.assertRaisesRegex(ValueError, "gripper indices"):
             ModelWrapper(policy=self.policy, payload=invalid_payload)
+
+    def test_debug_runtime_requires_and_forwards_explicit_opt_in(self):
+        policy = FakePolicy()
+        policy.config = PolicyConfig(backbone_initialization="random-frozen-debug", freeze_backbone=True)
+        payload = make_payload(policy)
+        for field in ("backbone_initialization", "backbone_initialization_seed", "base_vlm_id"):
+            payload["protocol"][field] = getattr(policy.config, field)
+        with self.assertRaisesRegex(ValueError, "explicit allow_debug_checkpoint"):
+            ModelWrapper(policy=policy, payload=payload)
+        with self.assertRaisesRegex(ValueError, "explicit allow_debug_checkpoint"):
+            ModelWrapper(policy=policy, payload=payload, allow_debug_checkpoint="true")
+        with patch("choice_mem.checkpoint.load_checkpoint", return_value=(policy, payload)) as loader:
+            wrapper = ModelWrapper("debug.pt", "cpu", allow_debug_checkpoint=True)
+        loader.assert_called_once_with("debug.pt", "cpu", expected=None, allow_debug_checkpoint=True)
+        self.assertEqual(wrapper.protocol_summary()["backbone_initialization"], "random-frozen-debug")
+        wrapper.update_obs(make_observation(0))
+        actions = wrapper.get_action()
+        self.assertEqual(actions.shape, (4, 14))
+        np.testing.assert_allclose(actions[0, [6, 13]], [0.35, 0.65], atol=1e-7)
+
+    def test_server_explicit_debug_flag_is_forwarded_without_a_completion_gate(self):
+        import serve_rmbench as serving
+
+        self.assertFalse(serving.parse_args(["--checkpoint", "debug.pt"]).allow_debug_checkpoint)
+        args = ["--checkpoint", "debug.pt", "--allow-debug-checkpoint"]
+        self.assertTrue(serving.parse_args(args).allow_debug_checkpoint)
+        server = Mock()
+        native = types.SimpleNamespace(PolicyServer=Mock(return_value=server), PolicyServerConfig=Mock())
+        model = Mock(protocol_summary=Mock(return_value=self.wrapper.protocol_summary()))
+        with patch.object(serving, "ModelWrapper", return_value=model) as wrapper, \
+                patch.object(serving, "add_native_paths") as paths, \
+                patch.object(serving.asyncio, "run") as run, \
+                patch.dict(sys.modules, {"client_server.ws.model_server": native}), \
+                patch("eval_multitask.validate_checkpoint", side_effect=AssertionError("Not the completion gate")), \
+                patch.object(torch.cuda, "set_device", side_effect=AssertionError("CPU test only")), \
+                redirect_stdout(io.StringIO()):
+            serving.main(args)
+        self.assertTrue(wrapper.call_args.kwargs["allow_debug_checkpoint"])
+        self.assertEqual(wrapper.call_args.args, (Path("debug.pt"), "cpu"))
+        native.PolicyServerConfig.assert_called_once_with(host="127.0.0.1", port=18820)
+        paths.assert_called_once()
+        run.assert_called_once_with(server.serve_forever.return_value)
 
     def test_audited_target_offset_is_honored_and_never_reapplied_at_eval(self):
         observed = {}

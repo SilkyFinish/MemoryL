@@ -1,6 +1,9 @@
 # Shared rules for all projects under memory_l.
 # Keep project-specific rules in each project's .gitignore.
 
+# Project-specific exclusions
+/TTTchoiceMem/tests/
+
 # Python bytecode and native extensions
 __pycache__/
 *.py[cod]

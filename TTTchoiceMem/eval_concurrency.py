@@ -509,7 +509,10 @@ def run_concurrent_suite(config, checkpoint: Path, eval_root: Path, checkpoint_c
         )
         for task_name in config.tasks
     ]
-    complete = all(result["coverage_complete"] for result in ordered_results) and not failures
+    complete = (
+        len(ordered_results) == len(config.tasks)
+        and all(result["coverage_complete"] for result in ordered_results) and not failures
+    )
     summary = {
         "state": "completed" if complete else "failed", "coverage_complete": complete,
         "requested_tasks": list(config.tasks), "requested_episodes": len(config.tasks) * config.episodes,

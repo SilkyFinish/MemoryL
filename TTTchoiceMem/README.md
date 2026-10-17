@@ -1,326 +1,71 @@
-# MemoryVLA：用于机器人操作的视觉语言动作模型中的感知与认知记忆
+# 第一阶段：MemoryVLA + RMBench 原生适配
 
-## 本地TTTchoiceMem实验入口
+本开发副本的主路线是 **原版 MemoryVLA VLM + 感知/认知双 Bank + DiT-L**，在 RMBench 原生数据与模拟器接口上训练、rollout。先建立尽可能接近原方法的基线，再研究 TurboVLA 的 VL interaction 替换；**本阶段没有接入 Turbo，也没有新增 TTT、学习式记忆选择或 OFT 方法**。
 
-本文件按用户要求改为中文。下方介绍和分数来自原MemoryVLA项目，**不是本机Qwen实验结果**；英文上游介绍仍可在同级`参考/MemoryVLA/README.md`查看，未修改该参考副本。
+修改仅在 `/mnt/data/dylan/d2/memory_l/TTTchoiceMem`。原工程 `/mnt/data/dylan/d2/memory/TTTchoiceMem`、参考源码和历史训练/评测产物不作为本副本的输出目录，也未被本轮改写。
 
-当前正式实验为**Qwen + 原版MemoryVLA双Bank + DiT-L，十任务联合训练，4卡DDP、全局64、55000更新**，然后自动进行十任务各50回合的原生RMBench评测。
+## 方法基准与默认配置
 
-公司集群另准备**8卡A800、全局128、OFT、55k**独立方案，保持其他有效超参数，尚未在集群执行。新命令默认主相机单图，可用`--cameras`选1～3路、`--action-head oft|diffusion`切换头、`--workers-per-gpu 1|2|3`选择每卡评测并发，8卡最高24路；完整命令见操作手册第11～12节。本机运行中DiT-L模型不切换、不重启。
+参考版本：MemoryVLA `openvla-codebase`，commit `d732ea9072bc063399ccc817aed74ab172eb50be`。上游介绍见[只读参考 README](../../memory/参考/MemoryVLA/README.md)及[项目网页](https://shihao1895.github.io/MemoryVLA)。本副本保留原 [vla/](vla/)、[prismatic/](prismatic/)、[action_model/](action_model/) 的架构与计算，由独立的 [choice_mem/](choice_mem/) 适配原生 RMBench。Prismatic 构造工厂另有默认值不变的离线随机初始化选项，仅供下述显式工程调试模式使用；只读参考仓库不修改。
 
-- [中文训练与评测操作手册](README_full_finetuning.md)：当前环境、完整训练/恢复/评测命令、tmux、保存位置、checkpoint磁盘占用。
-- [中文模型与数据说明](README_lightweight.md)：Qwen、两套Bank、动作头、可选相机与原生14维数据适配。
-- [中文实验日记](../document/experimental%20diary/2026-10-13_TTTchoiceMem_Qwen全量微调_DiTL_全局64_55k.md)：实际准备、启动、耗时与清理记录。
+| 项目 | 第一阶段默认 |
+| --- | --- |
+| VLM | 原 DINO + SigLIP / Prismatic / Llama，必须显式指定原资产 |
+| 动作头 | 原 ActionModel / DiT-L，输出 14D 原生绝对关节目标 |
+| 主干训练 | 全参数，不默认冻结 |
+| 训练历史 | 每 episode 随机无放回选 16 个有效时刻并排序；不足重复最后有效时刻 |
+| 图像增强 | train-only crop → brightness → contrast → saturation → hue |
+| 扩散目标 | repeat4，直接调用原 ActionModel.loss，尾部 padding 不进入 mask 排除 |
+| 记忆 | Per/Cog 分开读取，容量 16、读取 2 层、时间编码、门控、相邻 ToMe 合并 |
+| 推理时间 | 查询计数 0、1、2…；runtime 仍检查真实环境动作计数防止重复消费 |
+| 优化 | AdamW，统一 LR 2e-5、weight decay 0、constant、clip 1 |
+| 观察与执行 | head_camera 单视角、224×224、预测 16、执行前 4、DDIM 10、CFG 1.5 |
 
-**当前任务已经运行，不要按下面原版安装/训练示例重新安装依赖或重复启动。** 本地训练使用`.venv-qwen35-host512`，模拟器使用`.venv-rmbench-host512`，具体路径见操作手册；原版`pyproject.toml`与当前Qwen依赖并不相同。11个非正式run目录和7个验收脚本已按用户要求删除，当前正式代码、环境、资产和数据保留。
+上述视角、horizon、执行前缀和训练预算是显式实验选择，不是“RMBench 必须如此”。完整双 Bank 机制没有简化为 KV 缓存，旧历史仍 detach，不进行跨历史帧 BPTT。默认组长等于容量，组内训练不覆盖第 17 条之后的合并；长 rollout 才会触发容量合并。
 
-## 原MemoryVLA项目与作者
+## 保留的适配与明确差异
 
-[Hao Shi](https://shihao1895.github.io/), [Bin Xie](https://xb534.github.io/), [Yingfei Liu](https://scholar.google.com/citations?user=pF9KA1sAAAAJ), [Lin Sun](https://github.com/linsun449), [Fengrong Liu](https://shihao1895.github.io/MemoryVLA/) [Tiancai Wang](https://scholar.google.com/citations?user=YI0sRroAAAAJ), [Erjin Zhou](https://scholar.google.com/citations?user=k2ziPUsAAAAJ), [Haoqiang Fan](https://scholar.google.com/citations?user=bzzBut4AAAAJ), [Xiangyu Zhang](https://scholar.google.com/citations?user=yuB-cfoAAAAJ), [Gao Huang](https://scholar.google.com/citations?user=-P9LwcgAAAAJ)
+- 原生 HDF5、RMBench RGB codec、episode 级训练/验证划分与数据哈希。
+- 14D 顺序为左臂 6 + 左夹爪 + 右臂 6 + 右夹爪；两个夹爪连续，不套用旧 7D 单夹爪二值化。
+- 当前原生数据契约为 `obs[t] -> joint_action/vector[t+1:t+1+H]`；最后一帧不作 query，尾部重复末目标。`valid_mask` 保留为数据事实，但默认原版扩散目标不使用它。
+- 训练集 q01/q99 统计、全通道归一化、严格 checkpoint、可恢复采样和回合隔离。原版也使用 q01/q99，这不是新增方法。
+- 本地 HDF5/Pillow/NumPy 数据管道与 DDP 编排不是上游 RLDS/FSDP 的逐字复制。增强参数/顺序对齐，但不宣称与 TensorFlow/dlimp 随机数、插值逐位等价。
+- 可用原 VLM 预训练 run、原 VLA `.pt` 或本地 audited asset manifest 初始化；**仅加载 VLM 模块，压缩器、双 Bank 与 14D 动作头重新初始化**。若使用 LIBERO 微调后的 VLM，这属于初始化来源差异，需在实验中说明，不应称为 OpenVLA 预训练初始化的完全复现。
 
-清华大学、Dexmal、旷视、天津大学、哈尔滨工业大学、阶跃星辰
+## 可选：随机冻结 VLM 的工程闭环模式
 
-ICLR 2026
+`--backbone-initialization random-frozen-debug --backbone-initialization-seed 42 --freeze-backbone` 显式启用调试路径。它保持原 DINO + SigLIP + projector + Llama-2 7B 架构，但不读取或下载任何预训练大权重；`--model-path` 只消费本地 manifest 中经过哈希校验的 `llama_metadata` 小型资产。正式默认仍是 `pretrained` 和全量微调。
 
-> 本工程基于论文《MemoryVLA：用于机器人操作的视觉语言动作模型中的感知与认知记忆》的代码，并添加了独立Qwen/RMBench适配。
+调试模式将整个 VLM 冻结并保持 BF16/eval，压缩器、双 Bank 和 DiT-L 保持 FP32 可训练参数。它不缩小模型，也不改变原数据、损失或动作协议。checkpoint 保存实际随机权重和完整恢复状态，seed 不能代替权重。服务必须显式传 `--allow-debug-checkpoint`；正式评测 suite 不接受该模式冒充预训练方法分数。
 
-### [MemoryVLA项目](https://shihao1895.github.io/MemoryVLA) | [MemoryVLA++项目](https://shihao1895.github.io/MemoryVLA-PP-Web) | [论文](https://arxiv.org/abs/2508.19236) | [模型与日志](https://huggingface.co/collections/shihao1895/memoryvla)
+2026-10-17已实际通过随机冻结模式的**工程闭环**：3个optimizer steps（step1暂停后恢复至step3）、完成checkpoint检查、真实本地RPC推理及共享GPU7原生回合。固定任务 `observe_and_pickup / demo_clean`、seed900001，原生exit0、101个动作步、success=true，视频102帧可解码，源码/数据/metadata复核通过。详见[工程检验记录](runs/random_frozen_closed_loop_20261017/REPORT.md)及[最终验收JSON](runs/random_frozen_closed_loop_20261017/single_gpu_verification.json)。这不是正式方法成功率；正常任务失败也可通过工程验收，setup/OOM/RPC/超时异常则不能。本次共享GPU期间设备free最低仅23MiB，不代表共享部署显存稳定或适合长期运行。原计划见 [closed_loop_plan.json](runs/random_frozen_closed_loop_20261017/closed_loop_plan.json)。
 
-## 上游动态
+## 文档与入口
 
-- [2026-6-9] 扩展期刊版本[MemoryVLA++](https://shihao1895.github.io/MemoryVLA-PP-Web)已发布。
-- [2026-1-27] [MemoryVLA论文](https://arxiv.org/abs/2508.19236)被ICLR 2026接收。
-- [2025-11-5] [MemoryVLA](https://arxiv.org/abs/2508.19236)代码发布，包括MemoryVLA和MemoryVLA+。
-- [2025-10-20] [Dexbotic](https://github.com/Dexmal/dexbotic)代码库发布，已集成MemoryVLA。
-- [2025-8-26] [MemoryVLA论文](https://arxiv.org/abs/2508.19236)上线arXiv。
+- [模型、数据和兼容边界](README_lightweight.md)
+- [准备、训练、恢复与 rollout 命令](README_full_finetuning.md)
+- [train_rmbench.py](train_rmbench.py)：数据清单准备、单进程训练。
+- [train_multitask.py](train_multitask.py)：可恢复 DDP 训练。
+- [configure_training_job.py](configure_training_job.py)、[run_training_job.py](run_training_job.py)：独立计划与作业管理；新阶段不默认套用旧 Qwen 自动评测计划。
+- [serve_rmbench.py](serve_rmbench.py)、[eval_rmbench.py](eval_rmbench.py)、[eval_multitask.py](eval_multitask.py)：原生 XPolicyLab 服务与 rollout，不修改共享模拟器源码。
 
-## 方法概述
+Qwen/OFT、sequential 历史、masked loss 和 action-step PE 仅保留为**显式 legacy/消融选项**，不属于当前主路线。旧 v1 checkpoint 会被迁移成其原有方法配置，不会因新默认值改变训练时的语义。不要直接执行历史 `run_qwen35_*` shell 脚本来启动本阶段。
 
-MemoryVLA是受人类记忆系统启发的认知—记忆—动作框架，通过类似海马体的感知/认知记忆捕捉当前决策所需的时间依赖，实现长时序、时间感知的机器人动作生成。
+## 验收边界
 
-![MemoryVLA方法概述](images/intro.png)
+CPU回归使用feature fixtures、小型DiT和mock原资产，检查数学/协议/恢复/接口；整套结果为377通过、1跳过、130 subtests通过，不能代替真实大模型或模拟器验收。另已实际完成原架构随机冻结模式的3步GPU训练与恢复，训练allocator峰值allocated约32.85GiB，并从最终checkpoint完成真实RPC推理。这不等于正式预训练全量微调验收，也没有取得正式RMBench成功率。真实训练前仍须核对独立环境、资产、显存和分布式条件，不能沿用旧Qwen0.8B估计。当前DDP在正式全量训练时每个rank复制完整FP32参数、梯度与AdamW状态，增加卡数不会分摊它们；7B级全量训练的静态状态就可能超过单张80GB显存。本阶段未改造成上游FSDP，未验收全量训练显存可行性。
 
-上游以不同分支提供以下版本：
+本地资产清单为 `/mnt/data/dylan/d2/memory/RMBench/attention-test-memoryvla/assets/manifest.json`。本次随机冻结检验只使用其中经过校验的Llama config/tokenizer小型资产，没有读取、哈希或加载预训练大权重；不能据此宣称该清单中的预训练权重或正式全量训练已获验收。
 
-- **[MemoryVLA](https://github.com/shihao1895/MemoryVLA/tree/openvla-codebase)**：基于OpenVLA代码库。
-- **[MemoryVLA+](https://github.com/shihao1895/MemoryVLA/tree/dexbotic-codebase)**：基于自研[Dexbotic](https://dexbotic.com)代码库，提供更高模拟性能。
-- **MemoryVLA++**：MemoryVLA的扩展期刊版本。
+## 上游引用
 
-## 上游发布进度
-
-以下保留原README的发布清单；项目网页发布不代表所有代码、数据和权重都已开放：
-
-- [x] MemoryVLA（OpenVLA代码库）
-  - [x] 代码发布
-  - [x] 模型权重发布
-  - [x] 数据上传HuggingFace
-
-- [x] MemoryVLA+（Dexbotic代码库）
-- [ ] MemoryVLA++（扩展期刊版本）
-  - [ ] 代码发布
-  - [ ] 模型权重发布
-  - [ ] 数据上传HuggingFace
-
-
-## 原版说明目录
-
-本地保留的是基于OpenVLA的MemoryVLA源码；需要Dexbotic版本时应选择[MemoryVLA+](https://github.com/shihao1895/MemoryVLA/tree/dexbotic-codebase)，不要混用两分支的checkpoint/动作协议。
-
- * [模型与上游基准结果](#模型与上游基准结果)
- * [原版安装说明](#原版安装说明)
- * [原版LIBERO评测](#原版libero评测)
- * [原版SimplerEnv评测](#原版simplerenv评测)
- * [原版训练说明](#原版训练说明)
- * [原版真实机器人部署](#原版真实机器人部署)
- * [常见问题](#常见问题)
- * [引用](#引用)
-
-## 模型与上游基准结果
-
-> 以下原上游结果逐项保留，不是当前Qwen + DiT-L十任务模型的成功率。MemoryVLA表示OpenVLA代码库版本，MemoryVLA+表示Dexbotic版本；“未发布”对应原表TBD。
-
-### Libero
-
-| 模型             | 空间 | 物体 | 目标 | 长程10 | 长程90 | 平均 | 权重与日志 |
-| ---------------- | ------- | ------ | ---- | ------- | ------- | ---- | ------------------------------------------------------------ |
-| MemoryVLA        | 98.4    | 98.4   | 96.4 | 93.4    | 95.6    | 96.5 | [🤗 Spa](https://huggingface.co/shihao1895/memvla-libero-spatial), [🤗 Obj](https://huggingface.co/shihao1895/memvla-libero-object), [🤗 Goal](https://huggingface.co/shihao1895/memvla-libero-goal), [🤗 100](https://huggingface.co/shihao1895/memvla-libero-100) |
-| MemoryVLA+       | 98.2    | 97.8   | 96.4 | 93.6    | 96.2    | 96.5 | [🤗 Spa](https://huggingface.co/shihao1895/memvla-plus-libero-spatial), [🤗 Obj](https://huggingface.co/shihao1895/memvla-plus-libero-object), [🤗 Goal](https://huggingface.co/shihao1895/memvla-plus-libero-goal), [🤗 100](https://huggingface.co/shihao1895/memvla-plus-libero-100) |
-| MemoryVLA+ (mix) | 97.2    | 99.2   | 98.4 | 93.2    | 97.2    | 97.1 | [🤗 HF](https://huggingface.co/shihao1895/memvla-plus-libero-mix) |
-| MemoryVLA++      | 99.8    | 100.0  | 98.2 | 96.0    | 97.8    | 98.4 | 未发布 |
-
-### SimplerEnv-Bridge
-
-| 模型 | 勺子 | 胡萝卜 | 方块 | 茄子 | 平均 | 权重与日志 |
-| ----------- | ----- | ------ | ---- | -------- | ---- | ------------------------------------------------------------ |
-| MemoryVLA   | 75.0  | 75.0   | 37.5 | 100.0    | 71.9 | [🤗 HF](https://huggingface.co/shihao1895/memvla-bridge)      |
-| MemoryVLA+  | 100.0 | 66.7   | 70.8 | 100.0    | 84.4 | [🤗 HF](https://huggingface.co/shihao1895/memvla-plus-bridge) |
-| MemoryVLA++ | 83.3  | 66.7   | 45.8 | 100.0    | 73.9 | 未发布 |
-
-### Mikasa-Robo
-
-| 模型 | SGT | IM | RC3 | RC5 | RC9 | 平均 | 权重与日志 |
-| ----------- | ---- | ---- | ---- | ---- | ---- | ---- | ------------------------------------------------------- |
-| MemoryVLA   | 88   | 24   | 44   | 30   | 20   | 41.2 | [🤗 HF](https://huggingface.co/shihao1895/memvla-mikasa) |
-| MemoryVLA++ | 97   | 40   | 50   | 19   | 16   | 44.4 | 未发布 |
-
-### Libero-Plus
-
-| 模型 | 相机 | 机器人 | 语言 | 光照 | 背景 | 噪声 | 布局 | 平均 | 权重与日志 |
-| ----------------- | ---- | ---- | ---- | ----- | ----- | ---- | ------ | ---- | ----------- |
-| MemoryVLA         | 42.7 | 44.9 | 84.4 | 92.8  | 95.0  | 62.1 | 84.7   | 70.2 | 未发布 |
-| MemoryVLA++       | 36.4 | 68.9 | 88.7 | 93.8  | 90.6  | 63.5 | 83.8   | 73.1 | 未发布 |
-| MemoryVLA (SFT)   | 91.4 | 48.6 | 79.4 | 95.2  | 95.3  | 94.0 | 75.7   | 81.9 | 未发布 |
-| MemoryVLA++ (SFT) | 96.8 | 49.7 | 71.0 | 96.6  | 97.0  | 96.0 | 78.6   | 82.7 | 未发布 |
-
-### Calvin
-
-| 模型 | 1 | 2 | 3 | 4 | 5 | 平均 | 权重与日志 |
-| ----------- | ---- | ---- | ---- | ---- | ---- | ---- | ----------- |
-| MemoryVLA   | 94.8 | 87.4 | 81.4 | 75.9 | 69.4 | 4.09 | 未发布 |
-| MemoryVLA++ | 95.6 | 90.2 | 85.7 | 81.7 | 76.1 | 4.29 | 未发布 |
-
-### Fractal-VM
-
-| 模型 | 可乐罐 | 移近 | 开关抽屉 | 放入抽屉 | 平均 | 权重与日志 |
-| ---------- | -------- | --------- | ----------------- | ------------- | ---- | ------------------------------------------------------------ |
-| MemoryVLA  | 90.7     | 88.0      | 84.7              | 47.2          | 77.7 | [🤗 HF](https://huggingface.co/shihao1895/memvla-fractal)     |
-| MemoryVLA+ | 92.0     | 91.7      | 71.8              | -             | -    | [🤗 HF](https://huggingface.co/shihao1895/memvla-plus-fractal) |
-
-### Fractal-VA
-
-| 模型 | 可乐罐 | 移近 | 开关抽屉 | 放入抽屉 | 平均 | 权重与日志 |
-| ---------- | -------- | --------- | ----------------- | ------------- | ---- | ------------------------------------------------------------ |
-| MemoryVLA  | 80.5     | 78.8      | 53.2              | 58.3          | 67.7 | [🤗 HF](https://huggingface.co/shihao1895/memvla-fractal)     |
-| MemoryVLA+ | 83.5     | 81.8      | 63.2              | -             | -    | [🤗 HF](https://huggingface.co/shihao1895/memvla-plus-fractal) |
-
-### Maniskill2
-
-| 模型 | 拾取方块 | 堆叠方块 | 拾取单个YCB | 拾取单个EGAD | 杂乱YCB拾取 | 平均 | 权重与日志 |
-| ---------- | --------- | ---------- | --------------- | ---------------- | ---------------- | ---- | ------------------------------------------------------------ |
-| MemoryVLA+ | 85        | 75         | 60              | 85               | 45               | 70   | [🤗 HF](https://huggingface.co/shihao1895/memvla-plus-maniskill2) |
-
-## 原版安装说明
-
-**本节是上游环境说明，不适用于本次Qwen训练，不要在当前项目环境执行。** 原版使用Python3.10、PyTorch2.2.0与CUDA12.1；更低版本可能运行，但上游未测试。
-
-上游推荐[Miniconda](https://docs.conda.io/en/latest/miniconda.html)，并使用独立的`memvla`环境。以下保留原版命令作参考，当前已准备好的环境不需要重建：
-```bash
-conda create --name memvla python=3.10
-conda activate memvla
-
-pip install torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 --index-url https://download.pytorch.org/whl/cu121
-conda install -c nvidia cuda-nvcc=12.1 cuda-toolkit=12.1 -y
-```
-原版训练还使用[Flash Attention](https://github.com/Dao-AILab/flash-attention)2.5.5。示例wheel必须匹配Python、torch、CUDA和C++ ABI，不可直接套用于当前Qwen环境：
-
-```bash
-# 原版PyTorch2.2/CUDA12.1的示例，不适用于当前Qwen环境
-wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.5/flash_attn-2.5.5+cu122torch2.2cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
-pip install flash_attn-2.5.5+cu122torch2.2cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
-```
-
-上游安装流程是在独立原版工程中克隆[MemoryVLA](https://github.com/shihao1895/MemoryVLA)后执行`pip install -e .`。当前工程已经准备，不要重复克隆、覆盖源码或执行此安装来降级依赖。
-
-上游对NVIDIA Hopper GPU（如H20）的`Floating point exception (core dumped)`错误建议尝试下面的cuBLAS版本；这是历史排障建议，不是本机4090任务的必要操作：
-
-```bash
-# 原版H20错误排查示例，不在本次运行中执行
-pip install nvidia-cublas-cu12==12.4.5.8
-```
-
-## 原版LIBERO评测
-
-上游提供[LIBERO](https://libero-project.github.io/intro.html)评测接口和脚本。**本次RMBench评测使用独立`eval_multitask.py`，不是这些脚本。**
-
-1. 原版要求按[LIBERO仓库](https://github.com/Lifelong-Robot-Learning/LIBERO)指南准备模拟器，并放到原工程的`third_libs/LIBERO`。
-
-2. 本地原版脚本路径示例，需要原版模型/环境和相应配置，不能对当前训练重复启动：
-
-   ```bash
-   # 原版LIBERO评测
-   bash /mnt/data/dylan/d2/memory/TTTchoiceMem/script/eval/libero/eval_libero.sh
-   # 原版结果汇总
-   python /mnt/data/dylan/d2/memory/TTTchoiceMem/script/eval/libero/extract_libero_results.py
-   ```
-
-   > 原版流程先启动模型服务，再运行`evaluation/libero/eval_libero.py`。原README写作`develop.py`，本地实际保留的部署入口名为`deploy.py`，应以脚本实际内容为准。上游建议评测多个checkpoint并报告最好结果；**当前RMBench正式协议固定最终55k权重，不按结果挑checkpoint或重跑。**
-
-## 原版SimplerEnv评测
-
-上游还提供[SimplerEnv](https://simpler-env.github.io/)评测接口和脚本，和本次RMBench协议不同。
-
-1. 原版要求按[SimplerEnv仓库](https://github.com/simpler-env/SimplerEnv)指南准备模拟器，并放到原工程的`third_libs/SimplerEnv`。
-
-2. 本地原版Bridge脚本路径示例：
-
-   ```bash
-   # 原版Bridge评测
-   bash /mnt/data/dylan/d2/memory/TTTchoiceMem/script/eval/bridge/eval_bridge.sh
-   # 原版结果汇总
-   python /mnt/data/dylan/d2/memory/TTTchoiceMem/script/eval/bridge/extract_bridge_results.py
-   ```
-
-   > 上游认为SimplerEnv环境和扩散采样使不同checkpoint分数波动较大，建议每2500步评测并报告最好值。此说明仅描述原版习惯，**不更改本地固定最终55k/500回合的协议**。
-
-## 原版训练说明
-
-1. 原版使用[RLDS](https://github.com/google-research/rlds)格式的数据，不是当前原生RMBench HDF5：
-
-   - [LIBERO](https://libero-project.github.io/intro.html)：空间、物体、目标、长程10和长程90任务集。
-   - [Open X-Embodiment（OXE）](https://robotics-transformer-x.github.io/)中的Bridge数据。
-   - [Open X-Embodiment（OXE）](https://robotics-transformer-x.github.io/)中的Fractal数据。
-
-   数据下载需要[git-lfs](https://git-lfs.com)，上游数据地址分别为[LIBERO RLDS（约22GB）](https://huggingface.co/datasets/shihao1895/libero-rlds)、[Bridge RLDS（约157GB）](https://huggingface.co/datasets/shihao1895/bridge-rlds)、[Fractal RLDS](https://huggingface.co/datasets/shihao1895/fractal-rlds)。当前十任务原生数据已在本机，不需要下载这些数据来继续当前实验。
-
-2. 原版LIBERO训练使用[OpenVLA预训练模型](https://huggingface.co/openvla/openvla-7b-prismatic)（约30GB），Bridge/Fractal使用[CogACT预训练模型](https://huggingface.co/CogACT/CogACT-Large)（约31GB）。当前实验只使用固定官方Qwen主干，不复用它们的7维动作权重。
-
-3. 原版不同数据集训练脚本需要先配置`hf_token`、`wandb_entity`、权重、数据和日志路径。上游训练硬件为单节点8张NVIDIA A100，下列本地脚本仅作原版入口参考：
-
-   ```bash
-   # 原版Bridge训练
-   bash /mnt/data/dylan/d2/memory/TTTchoiceMem/script/train/bridge/train_bridge.sh
-   # 原版LIBERO空间任务训练
-   bash /mnt/data/dylan/d2/memory/TTTchoiceMem/script/train/libero/train_libero_spatial.sh
-   # 原版LIBERO物体任务训练
-   bash /mnt/data/dylan/d2/memory/TTTchoiceMem/script/train/libero/train_libero_object.sh
-   # 原版LIBERO目标任务训练
-   bash /mnt/data/dylan/d2/memory/TTTchoiceMem/script/train/libero/train_libero_goal.sh
-   # 原版LIBERO-100训练
-   bash /mnt/data/dylan/d2/memory/TTTchoiceMem/script/train/libero/train_libero_100.sh
-   # 原版Fractal训练
-   bash /mnt/data/dylan/d2/memory/TTTchoiceMem/script/train/fractal/train_fractal.sh
-   # 原版真实机器人数据训练
-   bash /mnt/data/dylan/d2/memory/TTTchoiceMem/script/train/real_world/train_real.sh
-   ```
-
-   原版自定义数据转换见[rlds_dataset_builder](https://github.com/kpertsch/rlds_dataset_builder)，动作是末端位移3维、旋转3维和夹爪1维，存放到`<data_root_dir>/custom_finetuning/1.0.0`并设置`vla.data_mix="custom_finetuning"`。**这与本次14维绝对关节驱动目标不同，不可混用标签、归一化或部署接口。**
-
-## 原版真实机器人部署
-
-原版部署建议先采集对应机器人的操作数据（例如遥操作），再微调预训练模型。
-
-原版服务端/客户端示例见[`deploy.py`](deploy.py)，不要将其7维末端动作服务与当前`serve_rmbench.py`的14维原生协议混用。
-
-原版服务器脚本为：
-```bash
-bash /mnt/data/dylan/d2/memory/TTTchoiceMem/script/eval/real_world/deploy.sh
-```
-
-机器人作为客户端，原版每次请求发送图像、文本和回合首帧标记以获得动作块。`episode_first_frame`是字符串`'True'`或`'False'`，表示是否为回合第一帧：
-
-```python
-image = request.files['image']
-query = request.form['text']
-episode_first_frame = request.form['episode_first_frame']
-```
-
-该原版接口参考[OpenVLA](https://github.com/openvla/openvla)和[CogACT](https://github.com/microsoft/CogACT)的设计。真实机器人部署前需额外验证动作单位、限位、停止机制和安全性，本次模拟评测通过不自动证明真机安全。
-
-## 常见问题
-
-下面保留上游SimplerEnv/ManiSkill安装排障经验，属于原版说明，不要求修改本机共享环境。
-
-**（1）Vulkan/SAPIEN依赖**
-
-示例错误原文：
-ImportError: libvulkan.so.1: cannot open shared object file: No such file or directory
-Some required Vulkan extension is not present. You may not use the renderer to render, however, CPU resources will be still available.
-
-上游建议安装以下系统库，执行前需确认系统权限及共享环境影响：
-
-```bash
-sudo apt install -y libegl1-mesa libgl1-mesa-dev libgles2-mesa-dev
-```
-
-参考：
-https://maniskill.readthedocs.io/en/latest/user_guide/getting_started/installation.html#troubleshooting
-
-> 检查Vulkan的`.json`是否指向当前NVIDIA驱动对应的`.so`；用`nvidia-smi`查看驱动，必要时检查`/usr/lib/x86_64-linux-gnu/`中的库。当前模拟器已经独立验收，不要因阅读本节而重新安装驱动。
-
-**（2）OpenGL依赖**
-
-示例错误原文：
-ImportError: libGL.so.1: cannot open shared object file: No such file or directory
-
-上游排障安装示例：
-
-```bash
-sudo apt install -y libgl1 libglib2.0-0 libglx-mesa0 libopengl0 libglu1-mesa mesa-utils
-```
-
-**（3）SimplerEnv视频录制**
-
-```bash
-sudo apt install -y ffmpeg
-```
-
-**（4）基准分数波动**
-
-上游指出不同训练步数、扩散采样和conda包版本可能影响分数，SimplerEnv尤为明显，并建议周期性评测/报告最好checkpoint。本次原生RMBench实验不照搬“挑最好结果”：固定最终55k权重和候选seed池、完整500回合覆盖，不按策略结果重跑。
-
-## 引用
-
-使用上游工作时，请考虑引用[MemoryVLA论文](https://arxiv.org/abs/2508.19236)。下方BibTeX保持原文，作者、题名及条目键不翻译：
+本项目基于 [MemoryVLA](https://github.com/shihao1895/MemoryVLA/tree/openvla-codebase)，上游论文分数不是本阶段 RMBench 实验结果。使用上游工作请引用：
 
 ```bibtex
 @article{shi2025memoryvla,
   title={MemoryVLA: Perceptual-Cognitive Memory in Vision-Language-Action Models for Robotic Manipulation},
   author={Shi, Hao and Xie, Bin and Liu, Yingfei and Sun, Lin and Liu, Fengrong and Wang, Tiancai and Zhou, Erjin and Fan, Haoqiang and Zhang, Xiangyu and Huang, Gao},
   journal={arXiv preprint arXiv:2508.19236},
-  year={2025}
-}
-
-@article{shi2026memoryvla++,
-  title={MemoryVLA++: Temporal Modeling via Memory and Imagination in Vision-Language-Action Models},
-  author={Shi, Hao and Li, Weiye and Xie, Bin and Wang, Yulin and Zhou, Renping and Wang, Tiancai and Zhang, Xiangyu and Luo, Ping and Huang, Gao},
-  journal={arXiv preprint arXiv:2606.09827},
-  year={2026}
-}
-
-@article{dexbotic,
-  title={Dexbotic: Open-Source Vision-Language-Action Toolbox},
-  author={Dexbotic Contributors},
-  journal={arXiv preprint arXiv:2510.23511},
   year={2025}
 }
 ```

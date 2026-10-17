@@ -7,10 +7,10 @@ evaluation, implicit budget changes, manifest preparation, or retries occur.
 Use --background for a detached, PID/status/log-tracked orchestrator. A later
 --resume CHECKPOINT is explicit and reuses the same frozen plan/job directory.
 
-Historical 448/30000 plans remain readable. The 64/55000 recipe uses four
-ranks; the 128/55000 recipe uses eight. Either 55000-step recipe can select
-diffusion or OFT independently of its batch size.
-Both keep one original 16-query group per forward and accumulation one.
+New stage-1 plans are training-only unless evaluation is explicitly frozen.
+All step/batch budgets are explicit, not tied to a legacy Qwen/55k recipe.
+Commands and writable paths into another checkout are rejected. Historical
+plans are never rewritten or silently redirected to local output directories.
 Completion gates use the immutable plan's budget, never a historical default.
 """
 
@@ -21,19 +21,24 @@ from dataclasses import dataclass
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shlex
 import signal
 import subprocess
+import sys
 import time
 
 from eval_multitask import (
     ALLOWED_GPU_IDS, EPISODES_PER_TASK, EvaluationConfig, GLOBAL_BATCH_SIZE, GROUP_SIZE,
-    PROJECT_ROOT, SEED_POOL_SIZE, TARGET_OPTIMIZER_STEPS, TASK_COUNT, build_suite_plan,
+    SEED_POOL_SIZE, TARGET_OPTIMIZER_STEPS, TASK_COUNT, build_suite_plan,
     check_gpu_utilization, check_port_free, read_json, require_absolute_path,
     required_accumulation, stop_owned_process, validate_checkpoint, write_atomic_json,
 )
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 def command_option(command: tuple[str, ...] | list[str], *names: str, default=None):
@@ -64,11 +69,11 @@ def training_tasks(command: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def training_cameras(command: tuple[str, ...]) -> tuple[str, ...]:
-    from choice_mem.config import SUPPORTED_CAMERAS, validate_cameras
+    from choice_mem.config import validate_cameras
 
     option_indices = [index for index, token in enumerate(command) if token == "--cameras" or token.startswith("--cameras=")]
     if not option_indices:
-        return SUPPORTED_CAMERAS
+        return ("head_camera",)
     if len(option_indices) != 1:
         raise ValueError("The frozen training command needs at most one --cameras list")
     option_index = option_indices[0]
@@ -82,20 +87,21 @@ def training_cameras(command: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def check_training_gpu_memory(plan) -> None:
-    if plan.target_optimizer_steps != 55000:
+    """Only enforce a memory reservation when the plan explicitly requests one."""
+    minimum = plan.environment.get("TRAINING_MINIMUM_FREE_GPU_GIB")
+    if minimum is None:
         return
+    minimum = float(minimum)
+    if not math.isfinite(minimum) or minimum <= 0:
+        raise ValueError("TRAINING_MINIMUM_FREE_GPU_GIB must be finite and positive")
     result = subprocess.run(
         ["nvidia-smi", "--query-gpu=index,memory.free", "--format=csv,noheader,nounits"],
         check=True, capture_output=True, text=True, timeout=15,
     )
-    free_memory = {
-        int(line.split(",")[0]): float(line.split(",")[1])
-        for line in result.stdout.splitlines() if line.strip()
-    }
-    # Both full-finetuning recipes require conservative initialization headroom.
+    free_memory = {int(line.split(",")[0]): float(line.split(",")[1]) for line in result.stdout.splitlines() if line.strip()}
     for gpu_id in plan.allowed_gpus:
-        if free_memory.get(gpu_id, 0) < 35 * 1024:
-            raise RuntimeError(f"GPU {gpu_id} has insufficient free memory for full finetuning: {free_memory.get(gpu_id)} MiB")
+        if free_memory.get(gpu_id, 0) < minimum * 1024:
+            raise RuntimeError(f"GPU {gpu_id} has insufficient free memory: {free_memory.get(gpu_id)} MiB")
 
 
 @dataclass(frozen=True)
@@ -106,7 +112,7 @@ class TrainingJobPlan:
     allowed_gpus: tuple[int, ...]
     environment: dict[str, str]
     training_command: tuple[str, ...]
-    evaluation_config: EvaluationConfig
+    evaluation_config: EvaluationConfig | None
     source_sha256: str
 
     @property
@@ -139,128 +145,88 @@ class TrainingJobPlan:
             eval_root=require_absolute_path(payload["eval_root"], "eval_root"),
             allowed_gpus=tuple(payload["allowed_gpus"]), environment=dict(payload["environment"]),
             training_command=tuple(payload["training_command"]),
-            evaluation_config=EvaluationConfig.from_dict(payload["evaluation_config"]),
+            evaluation_config=EvaluationConfig.from_dict(payload["evaluation_config"]) if payload.get("evaluation_config") is not None else None,
             source_sha256=hashlib.sha256(source_bytes).hexdigest(),
         )
         plan.validate()
         return plan
 
     def validate(self) -> None:
+        from train_multitask import build_parser, validate_arguments, validate_global_batch
+        from train_rmbench import validate_output_path
+
         if not self.allowed_gpus or len(set(self.allowed_gpus)) != len(self.allowed_gpus):
             raise ValueError("allowed_gpus must list unique physical GPU ids")
         if any(type(gpu_id) is not int or gpu_id not in ALLOWED_GPU_IDS for gpu_id in self.allowed_gpus):
             raise ValueError(f"Physical GPU ids must be unique values in {ALLOWED_GPU_IDS}")
-        world_size = len(self.allowed_gpus)
-        recipe = (self.global_batch_size, self.target_optimizer_steps)
-        expected_action_head = command_option(self.training_command, "--action-head", default="diffusion")
-        if expected_action_head not in {"diffusion", "oft"}:
-            raise ValueError("The frozen action head must be diffusion or oft")
-        if recipe == (64, 55000):
-            if world_size != 4 or self.per_device_batch_size != 16:
-                raise ValueError("The 64/55000 recipe requires four ranks with per-device batch 16")
-            expected_accumulation = 1
-            expected_save_every = "5000"
-        elif recipe == (128, 55000):
-            if world_size != 8 or self.per_device_batch_size != 16:
-                raise ValueError("The 128/55000 recipe requires eight ranks with per-device batch 16")
-            expected_accumulation = 1
-            expected_save_every = "5000"
-        elif recipe == (GLOBAL_BATCH_SIZE, TARGET_OPTIMIZER_STEPS):
-            expected_accumulation = required_accumulation(world_size)
-            expected_save_every = "1000"
-            if expected_action_head != "diffusion":
-                raise ValueError("Historical 448/30000 plans require diffusion")
-            if self.per_device_batch_size != GROUP_SIZE:
-                raise ValueError("Historical plans require per-device batch 16")
-        else:
-            raise ValueError("Unsupported frozen budget; authorized recipes are 448/30000, 64/55000 or 128/55000")
         if not all(isinstance(key, str) and isinstance(value, str) for key, value in self.environment.items()):
             raise ValueError("Plan environment must contain string keys and values")
         visible_devices = ",".join(str(gpu_id) for gpu_id in self.allowed_gpus)
         if self.environment.get("CUDA_VISIBLE_DEVICES") != visible_devices:
             raise ValueError(f"Plan must explicitly freeze CUDA_VISIBLE_DEVICES={visible_devices}")
-        if not set(self.evaluation_config.gpu_ids).issubset(self.allowed_gpus):
-            raise ValueError("Evaluation may use only the frozen allowed GPUs")
-        if self.evaluation_config.expected_training_steps != self.target_optimizer_steps:
-            raise ValueError("Training and evaluation completion gates must use the same frozen step budget")
-        if self.evaluation_config.expected_action_head != expected_action_head:
-            raise ValueError("Training and evaluation must freeze the same expected action head")
-        expected_cameras = self.evaluation_config.expected_cameras
-        if expected_cameras is not None and training_cameras(self.training_command) != expected_cameras:
-            raise ValueError("Training and evaluation must freeze the same ordered cameras")
-        training_cameras(self.training_command)
-        if len(self.training_command) < 3 or any(not isinstance(token, str) or not token for token in self.training_command):
-            raise ValueError("training_command must be a nonempty argv list, never a shell command")
         command = self.training_command
-        is_torchrun = Path(command[0]).name == "torchrun" or (
-            len(command) > 3 and command[1:3] == ("-m", "torch.distributed.run")
-        )
-        if not is_torchrun or not any(Path(token).name == "train_multitask.py" for token in command):
-            raise ValueError("Training must invoke train_multitask.py through torchrun")
-        required_options = {
-            ("--nproc-per-node", "--nproc_per_node"): str(world_size),
-            ("--group-size",): str(GROUP_SIZE), ("--global-batch-size",): str(self.global_batch_size),
-            ("--gradient-accumulation", "--grad-accumulation", "--gradient-accumulation-steps"): str(expected_accumulation),
-            ("--max-steps",): str(self.target_optimizer_steps),
-            ("--save-every",): expected_save_every, ("--snapshot-every",): "5000",
-        }
-        for option_names, expected_value in required_options.items():
-            if command_option(command, *option_names) != expected_value:
-                raise ValueError(f"Frozen command requires {option_names[0]}={expected_value}")
+        if len(command) < 4 or any(not isinstance(token, str) or not token for token in command):
+            raise ValueError("training_command must be a nonempty argv list, never a shell command")
+        if not Path(command[0]).is_absolute() or not os.access(command[0], os.X_OK):
+            raise ValueError("Freeze an explicit executable Python/torchrun path (normally sys.executable)")
+        is_torchrun = Path(command[0]).name == "torchrun" or command[1:3] == ("-m", "torch.distributed.run")
+        script_indices = [index for index, token in enumerate(command) if Path(token).name == "train_multitask.py"]
+        if not is_torchrun or len(script_indices) != 1:
+            raise ValueError("Training must invoke the local train_multitask.py through torchrun")
+        script_index = script_indices[0]
+        if Path(command[script_index]).resolve() != PROJECT_ROOT / "train_multitask.py":
+            raise ValueError("Frozen plan points to another checkout's training code; generate a new local stage-1 plan")
+        if command_option(command, "--nproc-per-node", "--nproc_per_node") != str(len(self.allowed_gpus)):
+            raise ValueError("--nproc-per-node must match the frozen GPU allocation")
         if command_option(command, "--nnodes", default="1") != "1":
             raise ValueError("Only single-node DDP is allowed")
         if "--standalone" in command or command_option(command, "--rdzv-endpoint", "--rdzv_endpoint") is not None:
             raise ValueError("Use an explicit local --master-port, not an uncheckable rendezvous endpoint")
         if command_option(command, "--resume") is not None:
             raise ValueError("Resume must be requested explicitly on run_training_job.py, not baked into the plan")
-        if any(command_option(command, option_name) is not None for option_name in ("--stop-after", "--benchmark-updates")):
+        if any(command_option(command, option) is not None for option in ("--stop-after", "--benchmark-updates")):
             raise ValueError("A formal job cannot contain a bounded preflight option")
-        if self.target_optimizer_steps == 55000:
-            fixed_options = {
-                "--model-revision": "2fc06364715b967f1860aea9cf38778875588b17",
-                "--horizon": "16", "--execute-prefix": "4",
-                "--mem-length": "16", "--retrieval-layers": "2", "--per-token-size": "256",
-                "--backbone-learning-rate": "0.00001", "--learning-rate": "0.0001",
-                "--minimum-backbone-learning-rate": "0.000001", "--minimum-head-learning-rate": "0.000005",
-                "--weight-decay": "0.005", "--warmup-ratio": "0.05", "--gradient-clip-norm": "2.5",
-                "--seed": "42", "--validation-fraction": "0.1",
-            }
-            if expected_action_head == "diffusion":
-                fixed_options["--diffusion-model-type"] = "DiT-L"
-            else:
-                fixed_options["--action-head"] = "oft"
-                fixed_options["--oft-hidden-dim"] = "256"
-            for option_name, expected_value in fixed_options.items():
-                if command_option(command, option_name) != expected_value:
-                    raise ValueError(f"The {self.global_batch_size}/55000 recipe requires {option_name}={expected_value}")
-        run_directory = command_option(command, "--run-dir")
-        if run_directory is None or require_absolute_path(run_directory, "--run-dir") != self.run_dir:
+        # A frozen plan records all budgets explicitly, even when the direct CLI
+        # can infer batch size from an already initialized world size.
+        for options in (("--max-steps",), ("--global-batch-size",), ("--grad-accumulation", "--gradient-accumulation-steps"), ("--group-size",), ("--save-every",), ("--snapshot-every",)):
+            if command_option(command, *options) is None:
+                raise ValueError(f"Frozen training command requires {options[0]}")
+        try:
+            arguments = build_parser().parse_args(list(command[script_index + 1:]))
+        except SystemExit as error:
+            raise ValueError("Invalid frozen train_multitask.py arguments") from error
+        if arguments.prepare_only:
+            raise ValueError("A training plan cannot contain --prepare-only")
+        validate_arguments(arguments)
+        validate_global_batch(len(self.allowed_gpus), arguments.per_device_batch_size, arguments.grad_accumulation, arguments.global_batch_size)
+        if arguments.run_dir is None or require_absolute_path(str(arguments.run_dir), "--run-dir") != self.run_dir:
             raise ValueError("Frozen command --run-dir must equal plan run_dir")
-        for option_name in ("--data-root", "--manifest", "--model-path"):
-            value = command_option(command, option_name)
+        for option in ("--data-root", "--manifest", "--model-path"):
+            value = command_option(command, option)
             if value is None:
-                raise ValueError(f"Frozen training command requires {option_name}")
-            require_absolute_path(value, option_name)
-        if command_option(command, "--model-revision") is None:
-            raise ValueError("Freeze an explicit --model-revision")
-        if training_tasks(command) != self.evaluation_config.tasks:
-            raise ValueError("Training and evaluation must freeze the same ordered ten-task list")
-        for field_name, expected_value in (("--backbone", "qwen35"), ("--action-head", expected_action_head)):
-            if command_option(command, field_name, default=expected_value) != expected_value:
-                raise ValueError(f"This job requires {field_name}={expected_value}")
-        if "--freeze-backbone" in command:
-            raise ValueError("This job requires full fine-tuning, not a frozen backbone")
-        if "--unfreeze-backbone" not in command:
-            raise ValueError("Full fine-tuning must be requested explicitly with --unfreeze-backbone")
-        # The verified 4-rank allocation peaks near 21.4 GB only with activation
-        # checkpointing; without it the step OOMs on the shared GPUs.
-        if "--gradient-checkpointing" not in command:
-            raise ValueError("This allocation requires --gradient-checkpointing")
+                raise ValueError(f"Frozen training command requires {option}")
+            require_absolute_path(value, option)
         directories = (self.job_root, self.run_dir, self.eval_root)
-        if len(set(directories)) != 3 or self.job_root.is_relative_to(self.run_dir) or self.job_root.is_relative_to(self.eval_root):
-            raise ValueError("Job root must not be identical to or nested inside training/evaluation outputs")
-        if self.run_dir.is_relative_to(self.eval_root) or self.eval_root.is_relative_to(self.run_dir):
-            raise ValueError("Training/evaluation directories must be independent")
+        for directory in directories:
+            validate_output_path(directory, "plan output")
+        if any(left == right or left.is_relative_to(right) or right.is_relative_to(left)
+               for index, left in enumerate(directories) for right in directories[index + 1:]):
+            raise ValueError("Job, training and evaluation directories must be independent")
+        if self.evaluation_config is not None:
+            if arguments.backbone_initialization == "random-frozen-debug":
+                raise ValueError("random-frozen-debug plans are training-only; formal evaluation never allows debug checkpoints")
+            if not set(self.evaluation_config.gpu_ids).issubset(self.allowed_gpus):
+                raise ValueError("Evaluation may use only the frozen allowed GPUs")
+            if self.evaluation_config.expected_training_steps != self.target_optimizer_steps:
+                raise ValueError("Training and evaluation completion gates must use the same frozen step budget")
+            if self.evaluation_config.expected_action_head != arguments.action_head:
+                raise ValueError("Training and evaluation must freeze the same expected action head")
+            if self.evaluation_config.expected_backbone is not None and self.evaluation_config.expected_backbone != arguments.backbone:
+                raise ValueError("Training and evaluation must freeze the same expected backbone")
+            if self.evaluation_config.expected_cameras is not None and training_cameras(command) != self.evaluation_config.expected_cameras:
+                raise ValueError("Training and evaluation must freeze the same ordered cameras")
+            if training_tasks(command) != self.evaluation_config.tasks:
+                raise ValueError("Training and evaluation must freeze the same ordered task list")
         self.training_port()
 
     def training_port(self) -> int:
@@ -268,25 +234,30 @@ class TrainingJobPlan:
         if host not in {"127.0.0.1", "localhost"}:
             raise ValueError("torchrun must use a local master address")
         port = int(command_option(self.training_command, "--master-port", "--master_port", default="29500"))
-        if not 1 <= port <= 65535 or port in self.evaluation_config.ports:
+        if not 1 <= port <= 65535 or (self.evaluation_config is not None and port in self.evaluation_config.ports):
             raise ValueError("torchrun needs a valid, separate master port")
         return port
 
 
 def build_evaluation_command(plan: TrainingJobPlan, checkpoint: Path) -> list[str]:
     config = plan.evaluation_config
+    if config is None:
+        raise ValueError("This is a training-only plan; evaluation requires a separate explicit protocol")
+    evaluation_plan = build_suite_plan(config, checkpoint)
     command = [
         str(config.qwen_python), str(PROJECT_ROOT / "eval_multitask.py"), "--checkpoint", str(checkpoint),
         "--eval-root", str(plan.eval_root), "--rmbench-root", str(config.rmbench_root),
         "--qwen-python", str(config.qwen_python), "--env-python", str(config.env_python),
         "--tasks", *config.tasks, "--gpu-ids", *(str(gpu_id) for gpu_id in config.gpu_ids),
-        "--ports", *(str(port) for port in config.ports), "--episodes", str(EPISODES_PER_TASK), "--seed", "0",
+        "--ports", *(str(port) for port in config.ports), "--episodes", str(config.episodes), "--seed", str(config.seed),
         "--instruction-type", "unseen", "--task-config", "demo_clean",
-        "--max-seed-attempts", str(SEED_POOL_SIZE),
+        "--max-seed-attempts", str(evaluation_plan["max_seed_attempts_per_task"]),
         "--server-timeout", str(config.server_timeout),
         "--expected-training-steps", str(plan.target_optimizer_steps),
         "--expected-action-head", config.expected_action_head,
     ]
+    if config.expected_backbone is not None:
+        command.extend(["--expected-backbone", config.expected_backbone])
     if config.workers_per_gpu != 1:
         command.extend(["--workers-per-gpu", str(config.workers_per_gpu)])
     if config.expected_cameras is not None:
@@ -316,29 +287,61 @@ def resolve_completed_checkpoint(plan: TrainingJobPlan) -> Path:
     checkpoint = checkpoint.resolve()
     if not checkpoint.is_relative_to(plan.run_dir) or not checkpoint.is_file():
         raise ValueError("Final checkpoint must be an existing file inside the frozen training run")
-    checkpoint_options = {"expected_step": plan.target_optimizer_steps}
-    if plan.evaluation_config.expected_action_head != "diffusion":
-        checkpoint_options["expected_action_head"] = plan.evaluation_config.expected_action_head
-    if plan.evaluation_config.expected_cameras is not None:
-        checkpoint_options["expected_cameras"] = plan.evaluation_config.expected_cameras
-    contract = validate_checkpoint(checkpoint, **checkpoint_options)
-    if plan.target_optimizer_steps == 55000:
-        manifest = read_json(Path(command_option(plan.training_command, "--manifest")))
-        protocol = contract["protocol"]
-        if contract["normalization"] != manifest["normalization"] or protocol["manifest_sha256"] != manifest["manifest_sha256"]:
-            raise ValueError("Final checkpoint data manifest or normalization differs from the frozen local dataset")
-        if protocol["train_episode_ids"] != manifest["normalization"]["training_episode_ids"]:
-            raise ValueError("Final checkpoint training episode split differs from the frozen local dataset")
-    model_revision = command_option(plan.training_command, "--model-revision")
-    model_source = command_option(plan.training_command, "--model-path")
-    if contract["config"].get("model_revision") != model_revision or contract["config"].get("model_source") != model_source:
-        raise ValueError("Final checkpoint model source/revision differs from the frozen training command")
-    if plan.target_optimizer_steps == 55000:
-        if tuple(contract["config"].get("cameras", ())) != training_cameras(plan.training_command):
-            raise ValueError("Final checkpoint cameras differ from the frozen training command")
-        optimization = contract["protocol"].get("optimization", {})
-        if optimization.get("world_size") != len(plan.allowed_gpus) or optimization.get("global_batch_size") != plan.global_batch_size:
-            raise ValueError("Final checkpoint batch/world size differs from the frozen training command")
+    from train_multitask import build_parser, build_policy_configuration, configuration_with_initialization_defaults
+
+    command = plan.training_command
+    script_index = next(index for index, token in enumerate(command) if Path(token).name == "train_multitask.py")
+    arguments = build_parser().parse_args(list(command[script_index + 1:]))
+    debug_gate = {}
+    if arguments.backbone_initialization == "random-frozen-debug":
+        if plan.evaluation_config is not None:
+            raise ValueError("random-frozen-debug completion is training-only, not a formal evaluation gate")
+        # Only an immutable, explicitly selected debug training plan may opt in.
+        # The formal pretrained call deliberately retains the default strict gate.
+        debug_gate["allow_debug_checkpoint"] = True
+    contract = validate_checkpoint(
+        checkpoint, expected_step=plan.target_optimizer_steps,
+        expected_action_head=arguments.action_head, expected_cameras=training_cameras(command),
+        **debug_gate,
+    )
+    manifest = read_json(Path(command_option(command, "--manifest")))
+    protocol = contract["protocol"]
+    if contract["normalization"] != manifest["normalization"] or protocol["manifest_sha256"] != manifest["manifest_sha256"]:
+        raise ValueError("Final checkpoint data manifest or normalization differs from the frozen local dataset")
+    if protocol["train_episode_ids"] != manifest["normalization"]["training_episode_ids"]:
+        raise ValueError("Final checkpoint training episode split differs from the frozen local dataset")
+    from train_multitask import canonical_task
+
+    expected_tasks = sorted(arguments.tasks if arguments.tasks is not None else {canonical_task(record) for record in manifest["episodes"]})
+    if sorted(protocol.get("sampling", {}).get("tasks", [])) != expected_tasks:
+        raise ValueError("Final checkpoint task gate differs from the frozen training selection")
+    requested = build_policy_configuration(arguments, manifest).to_dict()
+    recorded = configuration_with_initialization_defaults(contract["config"])
+    for field, value in requested.items():
+        if field in {"preprocessing", "feature_dimensions", "asset_manifest"} or (field == "model_revision" and value is None):
+            continue
+        if recorded.get(field) != value:
+            raise ValueError(f"Final checkpoint policy configuration/source/revision differs from frozen training command: {field}")
+    optimization = protocol.get("optimization", {})
+    expected_optimization = {
+        "max_steps": plan.target_optimizer_steps, "world_size": len(plan.allowed_gpus),
+        "global_batch_size": plan.global_batch_size, "grad_accumulation": plan.gradient_accumulation,
+        "group_size": arguments.group_size, "per_device_batch_size": plan.per_device_batch_size,
+        "recipe": arguments.optimization_recipe, "learning_rate": arguments.learning_rate,
+        "weight_decay": arguments.weight_decay, "gradient_clip_norm": arguments.gradient_clip_norm,
+        "warmup_ratio": arguments.warmup_ratio,
+        "backbone_learning_rate": arguments.backbone_learning_rate if arguments.optimization_recipe == "qwen-legacy" else arguments.learning_rate,
+        "memory_head_learning_rate": arguments.learning_rate,
+        "minimum_backbone_learning_rate": arguments.minimum_backbone_learning_rate if arguments.optimization_recipe == "qwen-legacy" else None,
+        "minimum_head_learning_rate": arguments.minimum_head_learning_rate if arguments.optimization_recipe == "qwen-legacy" else None,
+        "training_seed": arguments.seed, "gradient_checkpointing": arguments.gradient_checkpointing,
+        "find_unused_parameters": arguments.find_unused_parameters,
+        "schedule": "constant" if arguments.optimization_recipe == "memoryvla" else "cosine with linear warmup",
+    }
+    if arguments.backbone_initialization == "random-frozen-debug":
+        expected_optimization.update(master_dtype="float32", frozen_backbone_dtype="bfloat16", autocast_dtype="bfloat16")
+    if any(optimization.get(field) != value for field, value in expected_optimization.items()):
+        raise ValueError("Final checkpoint optimization/batch/world size differs from the frozen training command")
     return checkpoint
 
 
@@ -393,8 +396,8 @@ def prepare_job(plan: TrainingJobPlan, plan_path: Path, resume: Path | None) -> 
         "gradient_accumulation": plan.gradient_accumulation,
         "per_device_batch_size": plan.per_device_batch_size,
         "global_batch_size": plan.global_batch_size,
-        "requested_evaluation_episodes": 500,
-        "requested_seed_attempts_per_task": SEED_POOL_SIZE,
+        "requested_evaluation_episodes": len(plan.evaluation_config.tasks) * plan.evaluation_config.episodes if plan.evaluation_config is not None else 0,
+        "requested_seed_attempts_per_task": build_suite_plan(plan.evaluation_config, Path("<final checkpoint>"))["max_seed_attempts_per_task"] if plan.evaluation_config is not None else 0,
         "evaluation_started": False,
     })
 
@@ -453,6 +456,9 @@ def run_job(plan: TrainingJobPlan, resume: Path | None = None) -> int:
         checkpoint = resolve_completed_checkpoint(plan)
         record_status("training_completed", final_snapshot=str(checkpoint),
                       completed_optimizer_steps=plan.target_optimizer_steps)
+        if plan.evaluation_config is None:
+            record_status("completed", evaluation_started=False, evaluation_status="not_requested")
+            return 0
         evaluation_command = build_evaluation_command(plan, checkpoint)
         with (plan.job_root / "evaluation.log").open("x", encoding="utf-8") as evaluation_log:
             process = subprocess.Popen(evaluation_command, cwd=PROJECT_ROOT, env=environment,
@@ -469,7 +475,7 @@ def run_job(plan: TrainingJobPlan, resume: Path | None = None) -> int:
                           error="Native suite failed/incomplete; no retry was attempted")
             return 1
         summary = read_json(plan.eval_root / "summary.json")
-        expected_episodes = TASK_COUNT * EPISODES_PER_TASK
+        expected_episodes = len(plan.evaluation_config.tasks) * plan.evaluation_config.episodes
         if (
             summary.get("state") != "completed" or summary.get("coverage_complete") is not True
             or summary.get("completed_episodes") != expected_episodes
@@ -519,7 +525,7 @@ def main(argv=None) -> int:
         print(json.dumps({"job_root": str(plan.job_root), "environment": plan.environment,
                           "allowed_gpus": list(plan.allowed_gpus), "world_size": len(plan.allowed_gpus),
                           "gradient_accumulation": plan.gradient_accumulation,
-                          "evaluation": build_suite_plan(plan.evaluation_config, Path("<progress.json final_snapshot>")),
+                          "evaluation": build_suite_plan(plan.evaluation_config, Path("<progress.json final_snapshot>")) if plan.evaluation_config is not None else None,
                           "evaluation_gate": f"training exit 0 + completed {plan.target_optimizer_steps} steps + valid full final snapshot",
                           "executed": False}, indent=2))
         return 0
@@ -531,7 +537,7 @@ def main(argv=None) -> int:
     prepare_job(plan, plan_path, resume)
     if not arguments.background:
         return run_job(plan, resume)
-    command = [str(plan.evaluation_config.qwen_python), str(Path(__file__).resolve()),
+    command = [sys.executable, str(Path(__file__).resolve()),
                "--plan", str(plan.job_root / "plan.json"), "--worker"]
     if resume is not None:
         command.extend(["--resume", str(resume)])

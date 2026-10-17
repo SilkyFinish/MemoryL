@@ -1,4 +1,4 @@
-"""Native RMBench evaluation: ten tasks, explicitly twenty or fifty episodes.
+"""Native RMBench evaluation: selected official tasks, twenty or fifty episodes.
 
 Each selected physical GPU owns one to three independent policy/client slots;
 the default remains one task-level worker on each of the four GPUs allocated to
@@ -22,6 +22,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -35,7 +36,7 @@ import threading
 import time
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_RMBENCH_ROOT = PROJECT_ROOT.parent / "RMBench"
+DEFAULT_RMBENCH_ROOT = Path("/mnt/data/dylan/d2/memory/RMBench")
 EPISODES_PER_TASK = 50
 TASK_COUNT = 10
 TARGET_OPTIMIZER_STEPS = 30000
@@ -65,6 +66,19 @@ def resolve_seed_attempt_budget(episodes: int, max_seed_attempts: int | None = N
     ):
         raise ValueError(f"max_seed_attempts must equal episodes * 50 = {required_attempts}")
     return required_attempts
+
+
+def positive_integer(value: str) -> int:
+    value = int(value)
+    if value < 1:
+        raise argparse.ArgumentTypeError("Expected a positive integer")
+    return value
+
+
+def require_positive_integer(value, field_name: str) -> int:
+    if type(value) is not int or value < 1:
+        raise ValueError(f"{field_name} must be a positive integer")
+    return value
 
 
 def read_native_infrastructure_failures(output_dir: Path) -> list[str]:
@@ -261,10 +275,15 @@ class EvaluationConfig:
     workers_per_gpu: int = 1
     expected_cameras: tuple[str, ...] | None = None
     minimum_free_gpu_gib_per_worker: float = 8.0
+    expected_backbone: str | None = None
 
     @classmethod
     def from_dict(cls, configuration: dict) -> "EvaluationConfig":
         configuration = dict(configuration)
+        if configuration.get("tasks") is None:
+            configuration["tasks"] = read_native_tasks(
+                require_absolute_path(configuration["rmbench_root"], "rmbench_root"),
+            )
         if "max_seed_attempts" not in configuration:
             configuration["max_seed_attempts"] = resolve_seed_attempt_budget(
                 configuration.get("episodes", EPISODES_PER_TASK),
@@ -286,8 +305,12 @@ class EvaluationConfig:
 
     def validate(self) -> None:
         official_tasks = read_native_tasks(self.rmbench_root)
-        if len(self.tasks) != TASK_COUNT or set(self.tasks) != set(official_tasks):
-            raise ValueError("Evaluation must cover every task in the official ten-task list exactly once")
+        if (
+            not isinstance(self.tasks, (tuple, list)) or not self.tasks
+            or any(not isinstance(task, str) or task not in official_tasks for task in self.tasks)
+            or len(set(self.tasks)) != len(self.tasks)
+        ):
+            raise ValueError("Evaluation tasks must be a nonempty, unique subset of the official ten-task list")
         if type(self.max_seed_attempts) is not int:
             raise ValueError("max_seed_attempts must be an integer equal to episodes * 50")
         resolve_seed_attempt_budget(self.episodes, self.max_seed_attempts)
@@ -300,17 +323,15 @@ class EvaluationConfig:
             actual_value = getattr(self, field_name)
             if type(actual_value) is not type(required_value) or actual_value != required_value:
                 raise ValueError(f"Frozen evaluation requires {field_name}={required_value!r}")
-        if self.expected_training_steps not in (30000, 55000):
-            raise ValueError("Expected training steps must match an authorized 30000 or 55000 budget")
+        require_positive_integer(self.expected_training_steps, "expected_training_steps")
         if self.expected_action_head not in {"diffusion", "oft"}:
             raise ValueError("Expected action head must be diffusion or oft")
-        if self.expected_action_head == "oft" and self.expected_training_steps != 55000:
-            raise ValueError("The authorized OFT evaluation requires a 55000-step checkpoint")
+        if self.expected_backbone is not None and self.expected_backbone not in {"memoryvla", "qwen35"}:
+            raise ValueError("Expected backbone must be memoryvla or qwen35")
         if type(self.workers_per_gpu) is not int or not 1 <= self.workers_per_gpu <= 3:
             raise ValueError("workers_per_gpu must be an integer from 1 to 3")
         if self.expected_cameras is not None:
             validate_cameras(self.expected_cameras)
-        import math
         if (
             type(self.minimum_free_gpu_gib_per_worker) not in (float, int)
             or not math.isfinite(self.minimum_free_gpu_gib_per_worker)
@@ -341,71 +362,276 @@ class EvaluationConfig:
         return {field_name: str(value) if isinstance(value, Path) else value for field_name, value in asdict(self).items()}
 
 
-def validate_checkpoint(
-    checkpoint: Path, expected_step: int = TARGET_OPTIMIZER_STEPS, expected_action_head: str = "diffusion",
-    expected_cameras: tuple[str, ...] | None = None,
-) -> dict:
-    """Read the full saved model on CPU, without instantiating a pretrained VLM."""
-    if not checkpoint.is_file() or checkpoint.stat().st_size == 0:
-        raise ValueError(f"Missing or empty final checkpoint: {checkpoint}")
-    from choice_mem.checkpoint import read_checkpoint
+def _validate_source_assets(configuration: dict, *, legacy: bool = False) -> None:
+    """Hash local assets only; random debug depends on metadata, not pretrained weights."""
+    if configuration.get("backbone_initialization", "pretrained") == "random-frozen-debug":
+        from choice_mem.checkpoint import validate_debug_source_assets
 
-    payload = read_checkpoint(checkpoint)
-    if expected_action_head not in {"diffusion", "oft"} or (expected_action_head == "oft" and expected_step != 55000):
-        raise ValueError("Unsupported expected action head/step contract")
-    required_config = {
-        "backbone": "qwen35", "action_head": expected_action_head, "freeze_backbone": False,
-        "dtype": "bfloat16", "horizon": 16, "execute_prefix": 4, "group_size": 16,
-    }
-    for field_name, required_value in required_config.items():
+        validate_debug_source_assets(configuration)
+        return
+    from choice_mem.data import hash_file
+
+    source = require_absolute_path(configuration["model_source"], "model_source")
+    manifest = configuration.get("asset_manifest")
+    if not isinstance(manifest, dict) or (not manifest and not legacy):
+        raise ValueError("Final checkpoint requires a nonempty source asset_manifest")
+    assets = {}
+    declared_hashes = {}
+    if configuration["backbone"] == "memoryvla" and source.is_file():
+        if source.suffix == ".pt":
+            assets = {"config.json": source.parent.parent / "config.json", "checkpoint": source}
+        elif source.suffix == ".json":
+            specification = read_json(source)
+            assets = {"manifest": source, "checkpoint": Path(specification["checkpoint_path"])}
+            assets.update({name: Path(path) for name, path in specification["local_vision_files"].items()})
+            metadata = specification["llama_metadata"]
+            assets.update({"llama/" + name: Path(metadata["path"]) / name for name in metadata["files"]})
+            declared_hashes = {"checkpoint": specification["checkpoint_sha256"], **{
+                "llama/" + name: digest for name, digest in metadata["files"].items()
+            }}
+            source_config = specification["config.json"]
+            if hash_file(Path(source_config["path"])) != source_config["sha256"]:
+                raise ValueError("Final checkpoint's official source asset changed: config.json")
+        else:
+            raise ValueError("Unsupported MemoryVLA model_source file")
+        if set(assets) != set(manifest):
+            raise ValueError("Final checkpoint source asset_manifest aliases are incomplete or unexpected")
+    else:
+        for name in manifest:
+            relative_path = Path(name)
+            if relative_path.is_absolute() or ".." in relative_path.parts:
+                raise ValueError("Source asset_manifest must use relative asset paths")
+            assets[name] = source / relative_path
+    for name, path in assets.items():
+        expected_hash = manifest[name]
+        if not legacy and (
+            not isinstance(expected_hash, str) or len(expected_hash) != 64
+            or any(character not in "0123456789abcdef" for character in expected_hash)
+        ):
+            raise ValueError(f"Invalid source asset SHA256: {name}")
+        if hash_file(path) != expected_hash or declared_hashes.get(name, expected_hash) != expected_hash:
+            raise ValueError(f"Final checkpoint's official source asset changed: {name}")
+
+
+def _validate_legacy_checkpoint(payload: dict, expected_step: int) -> None:
+    """Keep the authorized v1 Qwen recipes separate from the v2 method contract."""
+    if expected_step not in (30000, 55000) or (payload["config"]["action_head"] == "oft" and expected_step != 55000):
+        raise ValueError("Legacy v1 requires an authorized 30000/55000 budget (OFT: 55000)")
+    for field_name, required_value in {
+        "backbone": "qwen35", "freeze_backbone": False, "dtype": "bfloat16", "group_size": 16,
+        "horizon": 16, "execute_prefix": 4,
+    }.items():
         if payload["config"].get(field_name) != required_value:
             raise ValueError(f"Final checkpoint must have {field_name}={required_value!r}")
-    if payload["step"] != expected_step:
+    if expected_step != 55000:
+        return
+    required_model = {
+        "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+        "mem_length": 16, "retrieval_layers": 2, "per_token_size": 256, "image_size": [224, 224],
+        "update_fused": False, "fusion_type": "gate", "consolidate_type": "tome",
+    }
+    if payload["config"]["action_head"] == "diffusion":
+        required_model.update(diffusion_model_type="DiT-L", ddim_steps=10, cfg_scale=1.5)
+    else:
+        required_model["oft_hidden_dim"] = 256
+    for field_name, expected_value in required_model.items():
+        if payload["config"].get(field_name) != expected_value:
+            raise ValueError(f"Final 55000 checkpoint requires {field_name}={expected_value!r}")
+    optimization = payload["protocol"].get("optimization", {})
+    if (optimization.get("world_size"), optimization.get("global_batch_size")) not in ((4, 64), (8, 128)):
+        raise ValueError("Final 55000 checkpoint requires world/global batch 4/64 or 8/128 independently of head")
+    for field_name, expected_value in {
+        "max_steps": 55000, "per_device_batch_size": 16, "grad_accumulation": 1, "groups_per_forward": 1,
+        "master_dtype": "float32", "autocast_dtype": "bfloat16", "gradient_checkpointing": True,
+    }.items():
+        if optimization.get(field_name) != expected_value:
+            raise ValueError(f"Final 55000 checkpoint has wrong optimization contract: {field_name}")
+    _validate_source_assets(payload["config"], legacy=True)
+
+
+def _validate_v2_checkpoint(payload: dict, expected_step: int) -> None:
+    configuration, protocol = payload["config"], payload["protocol"]
+    for field_name in ("horizon", "execute_prefix"):
+        require_positive_integer(configuration[field_name], field_name)
+    if configuration["execute_prefix"] > configuration["horizon"]:
+        raise ValueError("Checkpoint execute_prefix must not exceed horizon")
+    method_fields = ("history_sampling", "image_aug", "repeated_diffusion_steps", "mask_padding_loss", "inference_timestep_mode")
+    for field_name in ("action_dim", "horizon", "execute_prefix", "group_size", "image_size", *method_fields):
+        if protocol.get(field_name) != configuration.get(field_name) or field_name not in protocol:
+            raise ValueError(f"Checkpoint configuration and protocol disagree: {field_name}")
+    requested = protocol.get("requested_configuration")
+    if isinstance(requested, dict) and configuration.get("backbone_initialization", "pretrained") == "pretrained":
+        from choice_mem.checkpoint import INITIALIZATION_DEFAULTS
+
+        requested = {**INITIALIZATION_DEFAULTS, **requested}
+    enriched_fields = {"preprocessing", "feature_dimensions", "asset_manifest"}
+    if not isinstance(requested, dict) or set(configuration).difference(enriched_fields, requested):
+        raise ValueError("Checkpoint lacks its requested_configuration contract")
+    for field_name, expected_value in requested.items():
+        if field_name in enriched_fields or (field_name == "model_revision" and expected_value is None):
+            continue
+        if configuration.get(field_name) != expected_value:
+            raise ValueError(f"Checkpoint requested_configuration disagrees: {field_name}")
+    if configuration["action_dim"] != 14 or protocol.get("target_offset") != 1:
+        raise ValueError("Checkpoint must preserve native 14D next-recorded-action alignment")
+    digest = protocol.get("manifest_sha256")
+    if not isinstance(digest, str) or len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ValueError("Checkpoint requires a valid training manifest_sha256")
+    train_ids, validation_ids = protocol.get("train_episode_ids"), protocol.get("validation_episode_ids")
+    for field_name, episode_ids in (("train_episode_ids", train_ids), ("validation_episode_ids", validation_ids)):
+        if (
+            not isinstance(episode_ids, list) or (field_name == "train_episode_ids" and not episode_ids)
+            or any(not isinstance(identifier, str) or not identifier for identifier in episode_ids)
+            or len(set(episode_ids)) != len(episode_ids)
+        ):
+            raise ValueError(f"Invalid checkpoint manifest {field_name}")
+    normalization = payload["normalization"]
+    if set(train_ids).intersection(validation_ids) or normalization.get("training_episode_ids") != train_ids:
+        raise ValueError("Checkpoint manifest train/validation IDs or train-only normalization disagree")
+    if normalization.get("action_dim") != 14 or normalization.get("target_offset") != 1:
+        raise ValueError("Checkpoint normalization action/target contract disagrees")
+    statistics = normalization.get("action", normalization)
+    lower, upper = statistics.get("q01", []), statistics.get("q99", [])
+    if len(lower) != 14 or len(upper) != 14 or any(
+        type(value) not in (int, float) or not math.isfinite(value) for value in (*lower, *upper)
+    ) or any(high < low for low, high in zip(lower, upper)):
+        raise ValueError("Checkpoint normalization quantiles must be finite ordered 14D values")
+    sampling = protocol.get("sampling", {})
+    tasks, per_task = sampling.get("tasks"), sampling.get("per_task", {})
+    if (
+        not isinstance(tasks, list) or not tasks or any(not isinstance(task, str) or not task for task in tasks)
+        or len(set(tasks)) != len(tasks) or set(per_task) != set(tasks)
+    ):
+        raise ValueError("Checkpoint sampling requires nonempty distinct tasks and per-task manifest coverage")
+    for task in tasks:
+        require_positive_integer(per_task[task].get("train_episodes"), f"{task}.train_episodes")
+        validation_count = per_task[task].get("validation_episodes")
+        if type(validation_count) is not int or validation_count < 0:
+            raise ValueError("Invalid per-task validation episode coverage")
+    if (
+        sum(per_task[task]["train_episodes"] for task in tasks) != len(train_ids)
+        or sum(per_task[task]["validation_episodes"] for task in tasks) != len(validation_ids)
+        or ("tasks" in protocol and set(protocol["tasks"]) != set(tasks))
+        or sampling.get("history_sampling", configuration["history_sampling"]) != configuration["history_sampling"]
+    ):
+        raise ValueError("Checkpoint sampling and manifest coverage disagree")
+    optimization = protocol.get("optimization", {})
+    for field_name in ("max_steps", "world_size", "group_size", "per_device_batch_size", "groups_per_forward", "grad_accumulation", "global_batch_size"):
+        require_positive_integer(optimization.get(field_name), f"optimization.{field_name}")
+    if optimization["max_steps"] != expected_step:
+        raise ValueError("Final checkpoint has not completed its optimization.max_steps budget")
+    if (
+        optimization["group_size"] != configuration["group_size"]
+        or optimization["per_device_batch_size"] != optimization["group_size"] * optimization["groups_per_forward"]
+        or optimization["global_batch_size"] != optimization["world_size"] * optimization["per_device_batch_size"] * optimization["grad_accumulation"]
+    ):
+        raise ValueError("Checkpoint optimization group/batch contract disagrees")
+    if optimization.get("master_dtype") != "float32" or optimization.get("autocast_dtype") != configuration["dtype"]:
+        raise ValueError("Checkpoint optimization master/autocast dtype contract disagrees")
+    if configuration.get("backbone_initialization", "pretrained") == "random-frozen-debug" and (
+        optimization.get("frozen_backbone_dtype") != "bfloat16"
+    ):
+        raise ValueError("Debug checkpoint optimization frozen_backbone_dtype must be bfloat16")
+    for field_name in ("learning_rate", "backbone_learning_rate", "memory_head_learning_rate", "gradient_clip_norm", "weight_decay", "warmup_ratio"):
+        value = optimization.get(field_name)
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0 or (field_name not in {"weight_decay", "warmup_ratio"} and value == 0):
+            raise ValueError(f"Invalid checkpoint optimization {field_name}")
+    recipe = optimization.get("recipe")
+    if optimization.get("optimizer") != "AdamW" or recipe not in {"memoryvla", "qwen-legacy"}:
+        raise ValueError("Unsupported checkpoint optimization recipe/optimizer")
+    if recipe == "memoryvla":
+        if (
+            optimization.get("schedule") != "constant" or optimization["warmup_ratio"] != 0
+            or optimization["learning_rate"] != optimization["backbone_learning_rate"]
+            or optimization["learning_rate"] != optimization["memory_head_learning_rate"]
+            or any(optimization.get(field_name) is not None for field_name in ("minimum_backbone_learning_rate", "minimum_head_learning_rate"))
+        ):
+            raise ValueError("Checkpoint MemoryVLA single-LR constant optimization contract disagrees")
+    elif optimization.get("schedule") != "cosine with linear warmup" or not 0 <= optimization["warmup_ratio"] < 1:
+        raise ValueError("Checkpoint legacy cosine optimization contract disagrees")
+    state = payload.get("training_state")
+    if state is not None:
+        scheduler = state.get("scheduler", {})
+        if (
+            state.get("schema") != "choice-memory-multitask-training-v2" or state["schema"] != protocol.get("trainer")
+            or type(scheduler.get("completed_steps")) is not int or scheduler["completed_steps"] != expected_step
+            or type(scheduler.get("total_steps")) is not int or scheduler["total_steps"] != expected_step
+            or (recipe == "memoryvla" and scheduler.get("schedule") != "constant")
+        ):
+            raise ValueError("Checkpoint training_state scheduler has not completed the declared training budget")
+        micro_index = expected_step * optimization["grad_accumulation"] * optimization["world_size"]
+        if (
+            state.get("sampler") != sampling or len(state.get("rank_rng_states", [])) != optimization["world_size"]
+            or type(state.get("next_global_micro_index")) is not int or state["next_global_micro_index"] != micro_index
+            or type(state.get("next_global_group_index")) is not int
+            or state["next_global_group_index"] != micro_index * optimization["groups_per_forward"]
+            or not isinstance(payload.get("optimizer"), dict)
+        ):
+            raise ValueError("Checkpoint training_state sampler/optimizer position disagrees")
+    elif "optimizer" in payload:
+        raise ValueError("Checkpoint optimizer lacks its training_state completion contract")
+    _validate_source_assets(configuration)
+
+
+def validate_checkpoint(
+    checkpoint: Path, expected_step: int = TARGET_OPTIMIZER_STEPS, expected_action_head: str = "diffusion",
+    expected_cameras: tuple[str, ...] | None = None, expected_backbone: str | None = None,
+    allow_debug_checkpoint: bool = False,
+) -> dict:
+    """Validate a completed native policy on CPU, never instantiate a VLM or simulator.
+
+    v1 retains the frozen Qwen recipes. v2 uses the saved method/data/optimizer
+    contract; final inference snapshots need no resumable optimizer/training_state.
+    Debug opt-in is deliberately not exposed by the official suite CLI/config.
+    """
+    require_positive_integer(expected_step, "expected_step")
+    if expected_action_head not in {"diffusion", "oft"}:
+        raise ValueError("Unsupported expected action head")
+    if expected_backbone is not None and expected_backbone not in {"memoryvla", "qwen35"}:
+        raise ValueError("Expected backbone must be memoryvla or qwen35")
+    if not checkpoint.is_file() or checkpoint.stat().st_size == 0:
+        raise ValueError(f"Missing or empty final checkpoint: {checkpoint}")
+    from choice_mem.checkpoint import CHECKPOINT_SCHEMA, LEGACY_CHECKPOINT_SCHEMA, read_checkpoint
+    import torch
+
+    payload = read_checkpoint(checkpoint)
+    if type(payload["step"]) is not int or payload["step"] != expected_step:
         raise ValueError(f"Final checkpoint step must equal {expected_step}")
-    cameras = validate_cameras(payload["config"].get("cameras"))
+    configuration = payload["config"]
+    debug = configuration.get("backbone_initialization", "pretrained") == "random-frozen-debug"
+    if debug and allow_debug_checkpoint is not True:
+        raise ValueError("Debug checkpoint requires explicit allow_debug_checkpoint=True; not an official pretrained metric")
+    if configuration.get("backbone") not in {"memoryvla", "qwen35"}:
+        raise ValueError("Final checkpoint must use the memoryvla or qwen35 backbone")
+    if expected_backbone is not None and configuration["backbone"] != expected_backbone:
+        raise ValueError("Checkpoint backbone disagrees with expected_backbone")
+    if configuration.get("action_head") != expected_action_head:
+        raise ValueError(f"Final checkpoint must have action_head={expected_action_head!r}")
+    cameras = validate_cameras(configuration.get("cameras"))
     if validate_cameras(payload["protocol"].get("cameras")) != cameras:
         raise ValueError("Checkpoint configuration and protocol cameras disagree")
     if expected_cameras is not None and cameras != validate_cameras(expected_cameras):
         raise ValueError("Checkpoint cameras disagree with expected_cameras")
-    if expected_step == 55000:
-        required_model = {
-            "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
-            "mem_length": 16, "retrieval_layers": 2,
-            "per_token_size": 256, "image_size": [224, 224],
-            "update_fused": False,
-            "fusion_type": "gate", "consolidate_type": "tome",
-        }
-        if expected_action_head == "diffusion":
-            required_model.update(diffusion_model_type="DiT-L", ddim_steps=10, cfg_scale=1.5)
-        else:
-            required_model["oft_hidden_dim"] = 256
-        for field_name, expected_value in required_model.items():
-            if payload["config"].get(field_name) != expected_value:
-                raise ValueError(f"Final 55000 checkpoint requires {field_name}={expected_value!r}")
-        optimization = payload["protocol"].get("optimization", {})
-        if (optimization.get("world_size"), optimization.get("global_batch_size")) not in ((4, 64), (8, 128)):
-            raise ValueError("Final 55000 checkpoint requires world/global batch 4/64 or 8/128 independently of head")
-        for field_name, expected_value in {
-            "max_steps": 55000, "per_device_batch_size": 16,
-            "grad_accumulation": 1, "groups_per_forward": 1,
-            "master_dtype": "float32", "autocast_dtype": "bfloat16", "gradient_checkpointing": True,
-        }.items():
-            if optimization.get(field_name) != expected_value:
-                raise ValueError(f"Final 55000 checkpoint has wrong optimization contract: {field_name}")
-        import torch
-        from choice_mem.data import hash_file
-
-        source_root = Path(payload["config"]["model_source"])
-        for relative_path, expected_hash in payload["config"]["asset_manifest"].items():
-            if hash_file(source_root / relative_path) != expected_hash:
-                raise ValueError(f"Final checkpoint's official source asset changed: {relative_path}")
-        for parameter_name, tensor in payload["model"].items():
-            if tensor.is_floating_point() and (tensor.dtype != torch.float32 or not torch.isfinite(tensor).all()):
-                raise ValueError(f"Final checkpoint has nonfinite/non-FP32 model tensor: {parameter_name}")
+    if payload["schema"] == LEGACY_CHECKPOINT_SCHEMA:
+        _validate_legacy_checkpoint(payload, expected_step)
+    elif payload["schema"] == CHECKPOINT_SCHEMA:
+        _validate_v2_checkpoint(payload, expected_step)
+    else:
+        raise ValueError("Unsupported checkpoint schema")
     for component in ("backbone.", "action_head.", "per_compr.", "cog_mem_bank.", "per_mem_bank."):
         if not any(parameter_name.startswith(component) for parameter_name in payload["model"]):
             raise ValueError(f"Final checkpoint lacks full model component: {component}")
-    return {"step": payload["step"], "config": payload["config"], "protocol": payload["protocol"],
+    for parameter_name, tensor in payload["model"].items():
+        if not isinstance(tensor, torch.Tensor):
+            raise ValueError(f"Final checkpoint model entry is not a tensor: {parameter_name}")
+        require_fp32 = payload["schema"] == CHECKPOINT_SCHEMA or expected_step == 55000
+        expected_dtype = torch.bfloat16 if debug and parameter_name.startswith("backbone.") else torch.float32
+        if (tensor.is_floating_point() or tensor.is_complex()) and (
+            not torch.isfinite(tensor).all() or (require_fp32 and tensor.dtype != expected_dtype)
+        ):
+            requirement = "non-BF16 backbone" if debug and parameter_name.startswith("backbone.") else "non-FP32"
+            raise ValueError(f"Final checkpoint has nonfinite/{requirement} model tensor: {parameter_name}")
+    return {"step": payload["step"], "config": configuration, "protocol": payload["protocol"],
             "normalization": payload["normalization"]}
 
 
@@ -597,7 +823,12 @@ def run_suite(config: EvaluationConfig, checkpoint: Path, eval_root: Path) -> di
         checkpoint_expectations["expected_action_head"] = config.expected_action_head
     if config.expected_cameras is not None:
         checkpoint_expectations["expected_cameras"] = config.expected_cameras
+    if config.expected_backbone is not None:
+        checkpoint_expectations["expected_backbone"] = config.expected_backbone
     checkpoint_contract = validate_checkpoint(checkpoint, **checkpoint_expectations)
+    for field_name in ("horizon", "execute_prefix"):
+        if checkpoint_contract["config"][field_name] != getattr(config, field_name):
+            raise ValueError(f"Checkpoint {field_name} disagrees with the native evaluation contract")
     if config.workers_per_gpu > 1:
         from eval_concurrency import run_concurrent_suite
         return run_concurrent_suite(config, checkpoint, eval_root, checkpoint_contract)
@@ -633,7 +864,7 @@ def run_suite(config: EvaluationConfig, checkpoint: Path, eval_root: Path) -> di
                 with status_lock:
                     results[task_name] = result
                 # An incomplete task is never retried, but does not erase the
-                # other nine tasks' planned native evaluations.
+                # other selected tasks' planned native evaluations.
             except BaseException:
                 stop_event.set()
                 raise
@@ -664,7 +895,7 @@ def run_suite(config: EvaluationConfig, checkpoint: Path, eval_root: Path) -> di
         failure = "Evaluation interrupted; no unfinished native rollout was retried"
     ordered_results = [results[task_name] for task_name in config.tasks if task_name in results]
     requested_episodes = len(config.tasks) * config.episodes
-    complete = len(ordered_results) == TASK_COUNT and all(result["coverage_complete"] for result in ordered_results)
+    complete = len(ordered_results) == len(config.tasks) and all(result["coverage_complete"] for result in ordered_results)
     summary = {
         "state": "completed" if complete and failure is None else "failed", "requested_tasks": list(config.tasks),
         "requested_episodes": requested_episodes,
@@ -672,7 +903,7 @@ def run_suite(config: EvaluationConfig, checkpoint: Path, eval_root: Path) -> di
         "coverage_complete": complete, "tasks": ordered_results,
         "unstarted_tasks": [task_name for task_name in config.tasks if task_name not in results],
         "native_official_equal_task_success_rate": (
-            sum(result["native_official_success_rate"] for result in ordered_results) / TASK_COUNT if complete else None
+            sum(result["native_official_success_rate"] for result in ordered_results) / len(config.tasks) if complete else None
         ), "error": failure,
         "started_at": wall_start, "finished_at": time.time(), "evaluation_wall_seconds": time.time() - wall_start,
     }
@@ -715,7 +946,7 @@ def run_native_child(arguments: argparse.Namespace) -> int | None:
     Sapien_TEST()
     native_arguments = {
         "bench_name": "RMBench", "task_name": arguments.task_name, "task_config": "demo_clean",
-        "policy_name": "TTTchoiceMem", "ckpt_setting": f"fullft-step{arguments.expected_training_steps}",
+        "policy_name": "TTTchoiceMem", "ckpt_setting": f"policy-step{arguments.expected_training_steps}",
         "env_cfg_type": "aloha_agilex", "action_type": "joint", "host": "127.0.0.1",
         "port": arguments.port, "protocol": "ws", "xpolicylab_root": str(arguments.rmbench_root / "XPolicyLab"),
         "root_dir": str(arguments.rmbench_root), "seed": 0, "seed_offset": 0, "seed_stride": 1,
@@ -742,7 +973,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--eval-root", type=Path)
     parser.add_argument("--rmbench-root", type=Path, default=DEFAULT_RMBENCH_ROOT)
-    parser.add_argument("--qwen-python", type=Path)
+    parser.add_argument("--policy-python", "--qwen-python", dest="qwen_python", type=Path,
+                        help="Policy-server Python interpreter (legacy alias: --qwen-python)")
     parser.add_argument("--env-python", type=Path)
     parser.add_argument("--tasks", nargs="+")
     parser.add_argument("--gpu-ids", nargs="+", type=int, default=list(DEFAULT_GPU_IDS))
@@ -757,8 +989,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     # Policy episodes use an exact 50x expert pool; omission derives that pool.
     parser.add_argument("--max-seed-attempts", type=int)
     parser.add_argument("--server-timeout", type=float, default=120)
-    parser.add_argument("--expected-training-steps", type=int, choices=(30000, 55000), default=30000)
+    parser.add_argument("--expected-training-steps", type=positive_integer, default=TARGET_OPTIMIZER_STEPS,
+                        help="Expected completed optimizer budget; must match the checkpoint training contract")
     parser.add_argument("--expected-action-head", choices=("diffusion", "oft"), default="diffusion")
+    parser.add_argument("--expected-backbone", choices=("memoryvla", "qwen35"),
+                        help="Optional assertion of the saved policy backbone")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--native-child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--task-name", help=argparse.SUPPRESS)
@@ -785,7 +1020,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     elif arguments.case_seed is not None:
         parser.error("case-seed is reserved for native episode children")
     elif any(getattr(arguments, name) is None for name in ("checkpoint", "eval_root", "qwen_python", "env_python")):
-        parser.error("suite requires checkpoint, eval-root, qwen-python and env-python")
+        parser.error("suite requires checkpoint, eval-root, policy-python (or qwen-python) and env-python")
     return arguments
 
 
@@ -807,13 +1042,14 @@ def main(argv=None) -> int:
             return 0
         return run_native_child(arguments) or 0
     config = EvaluationConfig.from_dict({
-        "tasks": arguments.tasks or read_native_tasks(arguments.rmbench_root),
+        "tasks": arguments.tasks,
         "rmbench_root": arguments.rmbench_root, "qwen_python": arguments.qwen_python,
         "env_python": arguments.env_python, "gpu_ids": arguments.gpu_ids, "ports": arguments.ports,
         "episodes": arguments.episodes, "max_seed_attempts": arguments.max_seed_attempts,
         "server_timeout": arguments.server_timeout,
         "expected_training_steps": arguments.expected_training_steps,
         "expected_action_head": arguments.expected_action_head,
+        "expected_backbone": arguments.expected_backbone,
         "workers_per_gpu": arguments.workers_per_gpu,
         "expected_cameras": arguments.expected_cameras,
         "minimum_free_gpu_gib_per_worker": arguments.minimum_free_gpu_gib_per_worker,

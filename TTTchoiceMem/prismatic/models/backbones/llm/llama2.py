@@ -60,14 +60,26 @@ class LLaMa2LLMBackbone(HFCausalLLMBackbone):
         hf_token: Optional[str] = None,
         inference_mode: bool = False,
         use_flash_attention_2: bool = True,
+        hf_hub_path: Optional[str] = None,
+        local_files_only: bool = False,
+        torch_dtype: Optional[torch.dtype] = None,
+        attn_implementation: Optional[str] = None,
+        use_cache: Optional[bool] = None,
     ) -> None:
+        model_options = dict(LLAMA2_MODELS[llm_backbone_id])
+        if hf_hub_path is not None:
+            model_options["hf_hub_path"] = hf_hub_path
         super().__init__(
             llm_backbone_id,
             llm_max_length=llm_max_length,
             hf_token=hf_token,
             inference_mode=inference_mode,
             use_flash_attention_2=use_flash_attention_2,
-            **LLAMA2_MODELS[llm_backbone_id],
+            local_files_only=local_files_only,
+            torch_dtype=torch_dtype,
+            attn_implementation=attn_implementation,
+            use_cache=use_cache,
+            **model_options,
         )
 
         # [Special Case] LLaMa-2 PAD Token Handling --> for clarity, we add an extra token (and resize)

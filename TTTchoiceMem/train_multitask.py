@@ -1,14 +1,12 @@
-"""Full-finetune Qwen3.5 on ten native RMBench tasks with torchrun.
+"""Bounded, resumable MemoryVLA training on native RMBench tasks with torchrun.
 
-One forward is one chronological, single-episode group of 16 queries.
-The local diffusion plan uses four ranks for global64; the cluster OFT plan
-uses eight ranks for global128. Both use accumulation one. Diffusion reuses
-the unchanged MemoryVLA ActionModel, while OFT uses the existing masked-L1 head.
-Float32 master parameters are trained under bf16 autocast.
-The schedule always uses --max-steps, including a --stop-after 2 preflight.
-No evaluation, GPU selection, dependency installation, or other training
-entrypoint modification is performed here. The authorized 500-episode
-closed-loop evaluation remains a separate, subsequent operation.
+Stage 1 defaults to full MemoryVLA + diffusion DiT-L, one sorted random
+16-query episode group per forward, one LR 2e-5, constant AdamW, clip 1.
+Episodes, not tasks or fixed-stride chunks, receive equal sampling weight.
+Qwen/OFT, sequential history and the old split-LR cosine recipe are explicit
+opt-ins. --max-steps is required for training; --stop-after is a preflight cap,
+not a new scheduler budget. Preparation never imports torch; no evaluation
+or real training is launched implicitly.
 """
 
 from __future__ import annotations
@@ -23,55 +21,63 @@ import re
 import time
 import warnings
 from contextlib import nullcontext
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
 
-from choice_mem.data import RMBenchSequentialGroups, prepare_manifest
+from choice_mem.data import build_training_dataset, prepare_manifest
 from train_rmbench import build_parser as build_rmbench_parser
-from train_rmbench import positive_integer, summarize_manifest, write_run_json
+from train_rmbench import (
+    build_optimizer_groups, microstep_seed, positive_integer, summarize_manifest,
+    validate_model_source, validate_optimization, validate_output_path, write_run_json,
+)
 
 
-TRAINING_STATE_SCHEMA = "choice-memory-multitask-training-v1"
+TRAINING_STATE_SCHEMA = "choice-memory-multitask-training-v2"
 ROLLING_CHECKPOINT_PATTERN = re.compile(r"checkpoint-step[0-9]{6,}\.pt\Z")
-DEFAULT_MAX_STEPS = 30_000
+# Keep this metadata-only module torch-free; importing checkpoint's matching
+# defaults here would import torch during preparation / frozen-plan dry runs.
+INITIALIZATION_DEFAULTS = {
+    "backbone_initialization": "pretrained",
+    "backbone_initialization_seed": 42,
+    "base_vlm_id": "prism-dinosiglip-224px+7b",
+}
+
+
+def configuration_with_initialization_defaults(configuration: dict) -> dict:
+    """Historical missing provenance means pretrained, never random debug."""
+    return {**INITIALIZATION_DEFAULTS, **configuration}
+
+
+def protocols_match(recorded: dict, requested: dict) -> bool:
+    """Only fill the three absent legacy defaults; keep all other resume gates."""
+    def normalized(protocol):
+        result = configuration_with_initialization_defaults(deepcopy(protocol))
+        if isinstance(result.get("requested_configuration"), dict):
+            result["requested_configuration"] = configuration_with_initialization_defaults(result["requested_configuration"])
+        return result
+
+    return normalized(recorded) == normalized(requested)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = build_rmbench_parser()
     parser.description = __doc__
-    parser.set_defaults(
-        backbone="qwen35",
-        action_head="diffusion",
-        unfreeze_backbone=True,
-        dtype="bfloat16",
-        group_size=16,
-        cpu_threads=2,
-        device="rankauto",
-        max_steps=DEFAULT_MAX_STEPS,
-        learning_rate=1e-4,
-    )
-    parser._option_string_actions["--max-steps"].help = "Full optimizer-step budget; defaults to the authorized 30000"
+    parser.set_defaults(cpu_threads=2, device="rankauto")
+    parser._option_string_actions["--max-steps"].help = "Explicit full optimizer-step budget; required except with --prepare-only"
     parser._option_string_actions["--run-dir"].help = "New directory, or the same existing directory with --resume"
     parser._option_string_actions["--device"].help = "rankauto maps LOCAL_RANK to an already-visible CUDA device"
-    parser._option_string_actions["--learning-rate"].help = "Memory-bank/compressor/action-head learning rate"
-    # The shared parser can acquire task filtering independently of this entrypoint.
-    if "--tasks" not in parser._option_string_actions:
-        parser.add_argument("--tasks", nargs="+", default=None, help="Ten canonical task names; manifest filtering")
-    parser.add_argument("--global-batch-size", type=positive_integer, default=448)
+    parser._option_string_actions["--learning-rate"].help = "Single LR for all trainable parameters (head LR only in qwen-legacy)"
+    parser.add_argument("--global-batch-size", type=positive_integer, default=None, help="Optional exact query budget; otherwise world_size * group_size * accumulation")
+    parser.add_argument("--sampling-strategy", choices=["episode", "task-balanced"], default="episode", help="Episode-weighted by default; equal task weighting is an explicit ablation")
     parser.add_argument(
         "--per-device-batch-size", type=positive_integer, default=16,
         help="Queries in one forward/backward; exactly one original 16-query memory group",
     )
-    parser.add_argument("--grad-accumulation", "--gradient-accumulation-steps", type=positive_integer, default=4)
-    parser.add_argument("--backbone-learning-rate", type=float, default=1e-5)
-    parser.add_argument("--minimum-backbone-learning-rate", type=float, default=1e-6)
-    parser.add_argument("--minimum-head-learning-rate", type=float, default=5e-6)
-    parser.add_argument("--weight-decay", type=float, default=0.005)
-    parser.add_argument("--warmup-ratio", type=float, default=0.05)
-    parser.add_argument("--gradient-clip-norm", type=float, default=2.5)
+    parser.add_argument("--grad-accumulation", "--gradient-accumulation-steps", type=positive_integer, default=1)
     parser.add_argument(
         "--gradient-checkpointing", action="store_true", help="Opt-in nonreentrant Qwen layer checkpointing"
     )
@@ -83,13 +89,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--save-every", type=positive_integer, default=1000)
     parser.add_argument("--snapshot-every", type=positive_integer, default=5000)
-    parser.add_argument("--resume", nargs="?", const="latest", type=str, default=None)
-    parser.add_argument(
-        "--stop-after",
-        type=positive_integer,
-        default=None,
-        help="Stop after at most two additional optimizer steps; preserve the full training schedule",
-    )
     return parser
 
 
@@ -97,46 +96,29 @@ def validate_arguments(arguments: argparse.Namespace) -> None:
     from choice_mem.config import validate_cameras
 
     validate_cameras(arguments.cameras)
-    if arguments.backbone != "qwen35" or arguments.action_head not in {"diffusion", "oft"}:
-        raise ValueError("This entrypoint requires Qwen3.5 with diffusion or OFT full finetuning")
-    if not arguments.unfreeze_backbone or arguments.dtype != "bfloat16":
-        raise ValueError("The backbone must be unfrozen and forward autocast must be bfloat16")
-    if arguments.group_size != 16:
-        raise ValueError("Original chronological memory-bank groups must have --group-size 16")
+    validate_optimization(arguments)
+    validate_output_path(arguments.manifest, "--manifest")
+    if arguments.run_dir is not None:
+        validate_output_path(arguments.run_dir, "--run-dir")
     if arguments.per_device_batch_size != arguments.group_size:
-        raise ValueError("--per-device-batch-size must equal the original 16-query group size")
+        raise ValueError("--per-device-batch-size must equal the single episode group size (default original 16-query group)")
     if arguments.stop_after is not None and arguments.stop_after > 2:
         raise ValueError("--stop-after is a capped preflight: choose 1 or 2 optimizer steps")
-    if arguments.max_steps < 1:
-        raise ValueError("--max-steps must be positive")
-    for field_name in (
-        "backbone_learning_rate",
-        "learning_rate",
-        "minimum_backbone_learning_rate",
-        "minimum_head_learning_rate",
-        "gradient_clip_norm",
-    ):
-        field_value = getattr(arguments, field_name)
-        if not math.isfinite(field_value) or field_value <= 0:
-            raise ValueError(f"{field_name} must be finite and positive")
-    if not math.isfinite(arguments.weight_decay) or arguments.weight_decay < 0:
-        raise ValueError("weight_decay must be finite and nonnegative")
-    if not math.isfinite(arguments.warmup_ratio) or not 0 <= arguments.warmup_ratio < 1:
-        raise ValueError("warmup_ratio must be in [0, 1)")
-    if arguments.minimum_backbone_learning_rate > arguments.backbone_learning_rate:
-        raise ValueError("Minimum backbone learning rate exceeds its initial learning rate")
-    if arguments.minimum_head_learning_rate > arguments.learning_rate:
-        raise ValueError("Minimum head learning rate exceeds its initial learning rate")
-    if arguments.tasks is not None:
-        if len(arguments.tasks) != 10 or len(set(arguments.tasks)) != 10:
-            raise ValueError("--tasks must specify exactly ten distinct canonical native tasks")
-    if not arguments.prepare_only and arguments.run_dir is None:
-        raise ValueError("Training requires --run-dir; new runs cannot reuse an existing directory")
+    if not arguments.prepare_only:
+        if arguments.max_steps is None or arguments.max_steps < 1:
+            raise ValueError("Training requires explicit --max-steps; there is no implicit training budget")
+        if arguments.run_dir is None:
+            raise ValueError("Training requires --run-dir; new runs cannot reuse an existing directory")
+        arguments.model_path = validate_model_source(arguments.backbone, arguments.model_path, arguments.backbone_initialization)
+    if arguments.tasks is not None and (not arguments.tasks or len(set(arguments.tasks)) != len(arguments.tasks)):
+        raise ValueError("--tasks must specify nonempty distinct canonical native tasks")
     if arguments.prepare_only and arguments.resume is not None:
         raise ValueError("--prepare-only cannot resume training")
 
 
-def validate_global_batch(world_size: int, group_size: int, accumulation_steps: int, requested_batch: int) -> int:
+def validate_global_batch(world_size: int, group_size: int, accumulation_steps: int, requested_batch: int | None) -> int:
+    if requested_batch is None:
+        requested_batch = world_size * group_size * accumulation_steps
     if min(world_size, group_size, accumulation_steps, requested_batch) < 1:
         raise ValueError("World size, group size, accumulation and global batch must all be positive")
     actual_batch = world_size * group_size * accumulation_steps
@@ -154,6 +136,72 @@ def canonical_task(record: dict) -> str:
         raise ValueError("Every manifest episode must identify its task")
     # Older native manifests identify a task as '<task>/demo_clean'.
     return task_name.split("/", 1)[0]
+
+
+class RandomEpisodeSampler:
+    """Uniform episodes with replacement, never implicitly uniform tasks/chunks.
+
+    Random datasets expose one candidate list per episode; candidate count is
+    not batch size. get_group performs sorted history sampling with its own
+    stateless microstep seed, including last-query repeats for short episodes.
+    """
+
+    def __init__(self, dataset, group_size: int, seed: int, tasks=None, *, history_sampling="random", task_balanced=False):
+        self.seed = seed
+        self.group_size = group_size
+        self.history_sampling = history_sampling
+        self.task_balanced = task_balanced
+        observed = sorted({canonical_task(record) for record, _ in dataset.groups})
+        self.tasks = sorted(observed if tasks is None else tasks)
+        if not self.tasks or len(set(self.tasks)) != len(self.tasks) or set(observed).difference(self.tasks):
+            raise ValueError("Sampler requires distinct selected tasks and no unselected tasks")
+        self.indices_by_episode = {}
+        self.episodes_by_task = {task: [] for task in self.tasks}
+        self.excluded_tail_groups = 0
+        for index, (record, candidates) in enumerate(dataset.groups):
+            if not candidates or any(later <= earlier for earlier, later in zip(candidates, candidates[1:])):
+                raise ValueError("Episode candidates must be nonempty and strictly chronological")
+            if history_sampling == "sequential" and len(candidates) != group_size:
+                self.excluded_tail_groups += 1
+                continue
+            episode_id = record["episode_id"]
+            task = canonical_task(record)
+            if episode_id not in self.indices_by_episode:
+                self.indices_by_episode[episode_id] = []
+                self.episodes_by_task[task].append(episode_id)
+            elif episode_id not in self.episodes_by_task[task]:
+                raise ValueError("Episode ids must uniquely identify a task")
+            self.indices_by_episode[episode_id].append(index)
+        self.episodes = sorted(self.indices_by_episode)
+        if not self.episodes or any(not self.episodes_by_task[task] for task in self.tasks):
+            raise ValueError("Every selected task requires at least one eligible training episode")
+
+    def sample_index(self, completed_steps, accumulation_index, accumulation_steps, rank, world_size):
+        if completed_steps < 0 or not 0 <= accumulation_index < accumulation_steps or not 0 <= rank < world_size:
+            raise ValueError("Invalid sampler step, accumulation index, or rank")
+        generator = np.random.default_rng(microstep_seed(self.seed, completed_steps, accumulation_index, rank))
+        episodes = self.episodes
+        if self.task_balanced:
+            task = self.tasks[int(generator.integers(len(self.tasks)))]
+            episodes = self.episodes_by_task[task]
+        episode = episodes[int(generator.integers(len(episodes)))]
+        indices = self.indices_by_episode[episode]
+        return indices[int(generator.integers(len(indices)))]
+
+    def summary(self, manifest):
+        per_task = {task: {"train_episodes": 0, "validation_episodes": 0, "eligible_train_episodes": len(self.episodes_by_task[task])} for task in self.tasks}
+        for record in manifest["episodes"]:
+            task = canonical_task(record)
+            if task not in per_task:
+                raise ValueError("Normalization/split manifest contains unselected tasks")
+            per_task[task][f"{record['split']}_episodes"] += 1
+        return {
+            "tasks": self.tasks, "per_task": per_task, "eligible_train_episodes": len(self.episodes),
+            "excluded_tail_groups": self.excluded_tail_groups,
+            "history_sampling": self.history_sampling,
+            "sampling": "uniform task then episode (explicit ablation)" if self.task_balanced else "uniform episode with replacement; no task balancing",
+            "rng": "SeedSequence([seed mod 2**64, completed_steps, accumulation_index, rank]); get_group uses the same microstep seed",
+        }
 
 
 class FullGroupTaskSampler:
@@ -224,24 +272,44 @@ class FullGroupTaskSampler:
         }
 
 
-def build_optimizer_groups(policy, arguments: argparse.Namespace) -> list[dict]:
-    import torch
+class ConstantSchedule:
+    """Original optimizer LR, retaining an explicit resumable update budget."""
 
-    backbone_parameters = []
-    memory_head_parameters = []
-    for parameter_name, parameter in policy.named_parameters():
-        if not parameter.requires_grad:
-            raise ValueError(f"Full finetuning found a frozen parameter: {parameter_name}")
-        if parameter.dtype != torch.float32:
-            raise ValueError(f"Float32 master parameters are required before DDP/AdamW: {parameter_name}")
-        destination = backbone_parameters if parameter_name.startswith("backbone.") else memory_head_parameters
-        destination.append(parameter)
-    if not backbone_parameters or not memory_head_parameters:
-        raise ValueError("Both backbone and memory/head parameter groups must be populated")
-    return [
-        {"params": backbone_parameters, "lr": arguments.backbone_learning_rate, "name": "backbone"},
-        {"params": memory_head_parameters, "lr": arguments.learning_rate, "name": "memory_and_head"},
+    def __init__(self, optimizer, total_steps):
+        if total_steps < 1:
+            raise ValueError("Schedule requires a positive explicit budget")
+        self.optimizer = optimizer
+        self.total_steps = total_steps
+        self.base_rates = [float(group["lr"]) for group in optimizer.param_groups]
+        self.completed_steps = 0
+
+    def advance(self):
+        if self.completed_steps >= self.total_steps:
+            raise ValueError("Cannot advance a completed schedule")
+        self.completed_steps += 1
+
+    def state_dict(self):
+        return {"schedule": "constant", "total_steps": self.total_steps, "base_rates": self.base_rates, "completed_steps": self.completed_steps}
+
+    def load_state_dict(self, state):
+        expected = self.state_dict()
+        if any(state.get(name) != expected[name] for name in ("schedule", "total_steps", "base_rates")):
+            raise ValueError("Resume scheduler mismatch")
+        if not isinstance(state.get("completed_steps"), int) or not 0 <= state["completed_steps"] <= self.total_steps:
+            raise ValueError("Invalid resumed scheduler step")
+        self.completed_steps = state["completed_steps"]
+        for group, rate in zip(self.optimizer.param_groups, self.base_rates):
+            group["lr"] = rate
+
+
+def build_schedule(optimizer, arguments):
+    if arguments.optimization_recipe == "memoryvla":
+        return ConstantSchedule(optimizer, arguments.max_steps)
+    minimum_rates = [
+        arguments.minimum_backbone_learning_rate if group["name"] == "backbone" else arguments.minimum_head_learning_rate
+        for group in optimizer.param_groups
     ]
+    return CosineWarmupSchedule(optimizer, arguments.max_steps, arguments.warmup_ratio, minimum_rates)
 
 
 class CosineWarmupSchedule:
@@ -342,6 +410,12 @@ def restore_rng_state(state: dict, device=None) -> None:
 
 
 def enable_gradient_checkpointing(policy) -> None:
+    if getattr(getattr(policy, "config", None), "freeze_backbone", False):
+        raise ValueError("Gradient checkpointing conflicts with a frozen backbone; omit --gradient-checkpointing")
+    enable_backbone = getattr(policy.backbone, "enable_gradient_checkpointing", None)
+    if enable_backbone is not None:
+        enable_backbone()
+        return
     model = policy.backbone.model
     enable_function = getattr(model, "gradient_checkpointing_enable", None)
     if enable_function is None:
@@ -356,9 +430,9 @@ def enable_gradient_checkpointing(policy) -> None:
 
 def gradient_module(parameter_name: str) -> str:
     if parameter_name.startswith("backbone."):
-        if ".visual." in parameter_name:
+        if ".visual." in parameter_name or ".vision_backbone." in parameter_name:
             return "backbone_vision"
-        if ".language_model." in parameter_name:
+        if ".language_model." in parameter_name or ".llm_backbone." in parameter_name:
             return "backbone_language"
         return "backbone_other"
     return parameter_name.split(".", 1)[0]
@@ -392,12 +466,15 @@ def capture_weight_probes(policy) -> dict:
     candidates = {"backbone_vision": [], "backbone_language": []}
     for parameter_name, parameter in policy.named_parameters():
         module_name = gradient_module(parameter_name)
-        if module_name in candidates and parameter.ndim >= 2:
+        if module_name in candidates and parameter.requires_grad and parameter.ndim >= 2:
             candidates[module_name].append((parameter_name, parameter))
     probes = {}
     for module_name, parameters in candidates.items():
         if not parameters:
-            raise ValueError(f"Cannot audit actual Qwen weights: missing {module_name} matrix")
+            # --freeze-backbone intentionally has no trainable backbone probes.
+            if any(parameter.requires_grad for name, parameter in policy.named_parameters() if gradient_module(name) == module_name):
+                raise ValueError(f"Cannot audit actual backbone weights: missing {module_name} matrix")
+            continue
         # Prefer an encoder-layer projection over a potentially enormous embedding.
         parameter_name, parameter = min(
             parameters, key=lambda entry: (not (".blocks." in entry[0] or ".layers." in entry[0]), entry[1].numel())
@@ -444,7 +521,7 @@ def warn_gradient_diagnostics(diagnostics: dict, weight_changes: dict) -> None:
             )
 
 
-def validate_loaded_group(group: dict, group_size: int, execute_prefix: int) -> None:
+def validate_loaded_group(group: dict, group_size: int, execute_prefix: int | None = None) -> None:
     images = group.get("image_batches", group.get("images"))
     if images is None:
         raise ValueError("Native group must provide image_batches (or images)")
@@ -454,8 +531,12 @@ def validate_loaded_group(group: dict, group_size: int, execute_prefix: int) -> 
     if len(images) != group_size or len(set(group["episode_ids"])) != 1:
         raise ValueError("Every forward must contain one full chronological single-episode group")
     timesteps = group["timesteps"]
-    if any(later - earlier != execute_prefix for earlier, later in zip(timesteps, timesteps[1:])):
-        raise ValueError("Query timesteps must preserve the native chronological execute-prefix stride")
+    if any(int(value) != value or value < 0 for value in timesteps) or any(later < earlier for earlier, later in zip(timesteps, timesteps[1:])):
+        raise ValueError("Query timesteps must be sorted nonnegative integers")
+    # Short episodes pad their final query; duplicates anywhere else are not a
+    # random history and would incorrectly revisit earlier bank states.
+    if any(later == earlier and later != timesteps[-1] for earlier, later in zip(timesteps, timesteps[1:])):
+        raise ValueError("Only repeated final queries may pad a short episode group")
 
 
 def perform_optimizer_step(
@@ -482,8 +563,8 @@ def perform_optimizer_step(
             completed_steps, accumulation_index, arguments.grad_accumulation, rank, world_size,
         )
         data_start = time.perf_counter()
-        group = dataset[group_index]
-        validate_loaded_group(group, arguments.group_size, arguments.execute_prefix)
+        group = dataset.get_group(group_index, seed=microstep_seed(arguments.seed, completed_steps, accumulation_index, rank))
+        validate_loaded_group(group, arguments.group_size)
         data_latency += time.perf_counter() - data_start
         sampled_tasks[canonical_task(dataset.groups[group_index][0])] += 1
         images = group.get("image_batches", group.get("images"))
@@ -495,7 +576,7 @@ def perform_optimizer_step(
         try:
             # no_sync must enclose forward as well as backward, not just backward.
             with synchronization_context:
-                with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=arguments.dtype == "bfloat16"):
                     loss = distributed_policy(
                         images,
                         group["instructions"],
@@ -545,7 +626,7 @@ def initialize_distributed(arguments) -> DistributedRuntime:
     rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
-    validate_global_batch(
+    arguments.global_batch_size = validate_global_batch(
         world_size, arguments.per_device_batch_size, arguments.grad_accumulation, arguments.global_batch_size,
     )
     if not 0 <= rank < world_size or not 0 <= local_rank < torch.cuda.device_count():
@@ -557,7 +638,7 @@ def initialize_distributed(arguments) -> DistributedRuntime:
     torch.set_num_threads(arguments.cpu_threads)
     device = torch.device("cuda", local_rank)
     torch.cuda.set_device(device)
-    if not torch.cuda.is_bf16_supported():
+    if arguments.dtype == "bfloat16" and not torch.cuda.is_bf16_supported():
         raise RuntimeError("The current LOCAL_RANK's visible device does not support bfloat16")
     distributed.init_process_group(backend="nccl", rank=rank, world_size=world_size, timeout=timedelta(minutes=10))
     return DistributedRuntime(rank, local_rank, world_size, device)
@@ -586,6 +667,8 @@ def prepare_training_manifest(arguments) -> dict:
         group_size=arguments.group_size,
         seed=arguments.seed,
         validation_fraction=arguments.validation_fraction,
+        history_sampling=arguments.history_sampling,
+        image_aug=arguments.image_aug,
     )
     if arguments.tasks is not None:
         if "tasks" not in inspect.signature(prepare_manifest).parameters:
@@ -602,6 +685,9 @@ def build_policy_configuration(arguments, manifest):
         action_head=arguments.action_head,
         model_source=arguments.model_path,
         model_revision=arguments.model_revision,
+        backbone_initialization=arguments.backbone_initialization,
+        backbone_initialization_seed=arguments.backbone_initialization_seed,
+        base_vlm_id=arguments.base_vlm_id,
         horizon=arguments.horizon,
         action_dim=14,
         execute_prefix=arguments.execute_prefix,
@@ -613,12 +699,18 @@ def build_policy_configuration(arguments, manifest):
         oft_hidden_dim=arguments.oft_hidden_dim,
         diffusion_model_type=arguments.diffusion_model_type,
         group_size=arguments.group_size,
-        freeze_backbone=False,
-        dtype="bfloat16",
+        history_sampling=arguments.history_sampling,
+        image_aug=arguments.image_aug,
+        repeated_diffusion_steps=arguments.repeated_diffusion_steps,
+        mask_padding_loss=arguments.mask_padding_loss,
+        inference_timestep_mode=arguments.inference_timestep_mode,
+        freeze_backbone=not arguments.unfreeze_backbone,
+        dtype=arguments.dtype,
     )
 
 
 def build_protocol(arguments, manifest, runtime, sampler, requested_configuration) -> dict:
+    requested_configuration = configuration_with_initialization_defaults(requested_configuration)
     return {
         **manifest["protocol"],
         "trainer": TRAINING_STATE_SCHEMA,
@@ -633,16 +725,20 @@ def build_protocol(arguments, manifest, runtime, sampler, requested_configuratio
         ],
         "codec": manifest["codec"],
         "requested_configuration": requested_configuration,
+        **{field: requested_configuration.get(field, default) for field, default in INITIALIZATION_DEFAULTS.items()},
         "sampling": sampler.summary(manifest),
         "optimization": {
             "optimizer": "AdamW",
-            "backbone_learning_rate": arguments.backbone_learning_rate,
+            "recipe": arguments.optimization_recipe,
+            "learning_rate": arguments.learning_rate,
+            "backbone_learning_rate": arguments.backbone_learning_rate if arguments.optimization_recipe == "qwen-legacy" else arguments.learning_rate,
             "memory_head_learning_rate": arguments.learning_rate,
             "weight_decay": arguments.weight_decay,
-            "schedule": "cosine with linear warmup",
+            "weight_decay_exclusions": ["bias", "norm", "one-dimensional parameters"] if arguments.optimization_recipe == "memoryvla" else [],
+            "schedule": "constant" if arguments.optimization_recipe == "memoryvla" else "cosine with linear warmup",
             "warmup_ratio": arguments.warmup_ratio,
-            "minimum_backbone_learning_rate": arguments.minimum_backbone_learning_rate,
-            "minimum_head_learning_rate": arguments.minimum_head_learning_rate,
+            "minimum_backbone_learning_rate": arguments.minimum_backbone_learning_rate if arguments.optimization_recipe == "qwen-legacy" else None,
+            "minimum_head_learning_rate": arguments.minimum_head_learning_rate if arguments.optimization_recipe == "qwen-legacy" else None,
             "gradient_clip_norm": arguments.gradient_clip_norm,
             "max_steps": arguments.max_steps,
             "world_size": runtime.world_size,
@@ -652,23 +748,32 @@ def build_protocol(arguments, manifest, runtime, sampler, requested_configuratio
             "grad_accumulation": arguments.grad_accumulation,
             "global_batch_size": arguments.global_batch_size,
             "training_seed": arguments.seed,
-            "master_dtype": "float32",
-            "autocast_dtype": "bfloat16",
+            "master_dtype": "float32",  # Trainable optimizer masters, not every model parameter.
+            **({"frozen_backbone_dtype": "bfloat16"} if arguments.backbone_initialization == "random-frozen-debug" else {}),
+            "autocast_dtype": arguments.dtype,
             "gradient_checkpointing": arguments.gradient_checkpointing,
             "find_unused_parameters": arguments.find_unused_parameters,
             "torch_cpu_threads": arguments.cpu_threads,
-            "hyperparameter_provenance": "Adapted from official MemoryVLA Mem0; not an official Qwen/native10 recipe",
+            "hyperparameter_provenance": "Original MemoryVLA single-LR AdamW/constant/clip1 defaults; RMBench joint targets and deployment prefix are interface adaptations" if arguments.optimization_recipe == "memoryvla" else "Explicit legacy Qwen split-LR cosine recipe; not the stage-1 baseline",
         },
-        "evaluation": {"requested_episodes_after_training": 500, "executed_by_this_trainer": False},
+        "history_sampling": arguments.history_sampling,
+        "image_aug": arguments.image_aug,
+        "repeated_diffusion_steps": arguments.repeated_diffusion_steps,
+        "mask_padding_loss": arguments.mask_padding_loss,
+        "inference_timestep_mode": arguments.inference_timestep_mode,
+        "execute_prefix_provenance": "RMBench deployment choice; not the random training history stride",
+        "evaluation": {"executed_by_this_trainer": False},
     }
 
 
 def validate_resume_payload(payload, requested_configuration, protocol, normalization, world_size: int) -> dict:
-    if payload.get("schema") != "choice-memory-rmbench-v1":
-        raise ValueError("Resume requires the shared choice-memory-rmbench-v1 checkpoint schema")
-    if payload.get("protocol") != protocol or payload.get("normalization") != normalization:
+    from choice_mem.checkpoint import CHECKPOINT_SCHEMA
+
+    if payload.get("schema") != CHECKPOINT_SCHEMA:
+        raise ValueError("Resume requires the current shared checkpoint schema (legacy checkpoints must be read/migrated first)")
+    if not protocols_match(payload.get("protocol", {}), protocol) or payload.get("normalization") != normalization:
         raise ValueError("Resume data/configuration/optimization protocol differs from this run")
-    recorded_configuration = payload.get("config", {})
+    recorded_configuration = configuration_with_initialization_defaults(payload.get("config", {}))
     enriched_fields = {"preprocessing", "feature_dimensions", "asset_manifest"}
     for field_name, field_value in requested_configuration.items():
         if field_name in enriched_fields or (field_name == "model_revision" and field_value is None):
@@ -691,8 +796,12 @@ def validate_resume_payload(payload, requested_configuration, protocol, normaliz
     groups_per_forward = protocol["optimization"].get("groups_per_forward", 1)
     if groups_per_forward > 1 and state.get("next_global_group_index") != expected_micro_index * groups_per_forward:
         raise ValueError("Checkpoint independent memory-group sampler position mismatch")
-    if not {"backbone_vision", "backbone_language"}.issubset(state.get("weight_probes", {})):
-        raise ValueError("Resumable checkpoint must preserve actual Qwen initial-weight probes")
+    if "weight_probes" not in state:
+        raise ValueError("Resumable checkpoint must preserve initial-weight probes (empty when backbone is frozen)")
+    if not requested_configuration.get("freeze_backbone", False) and not {"backbone_vision", "backbone_language"}.issubset(state["weight_probes"]):
+        raise ValueError("Resumable full-finetune checkpoint must preserve actual backbone initial-weight probes")
+    if state.get("sampler") != protocol.get("sampling"):
+        raise ValueError("Checkpoint sampler definition mismatch")
     return state
 
 
@@ -758,6 +867,7 @@ def save_training_checkpoint(
     retained_names = new_owned_names[-2:]
     training_state = {
         "schema": TRAINING_STATE_SCHEMA,
+        "sampler": protocol.get("sampling"),
         "scheduler": scheduler.state_dict(),
         "rank_rng_states": rank_rng_states,
         "next_global_micro_index": completed_steps * protocol["optimization"]["grad_accumulation"] * runtime.world_size,
@@ -816,15 +926,18 @@ def run_training(arguments, manifest, runtime, run_directory: Path) -> dict:
     from choice_mem.checkpoint import read_checkpoint
     from choice_mem.config import PolicyConfig
     from choice_mem.policy import ChoiceMemoryPolicy
+    from choice_mem.precision import prepare_training_precision
 
     ensure_training_state_support()
     actual_batch = validate_global_batch(
         runtime.world_size, arguments.per_device_batch_size, arguments.grad_accumulation, arguments.global_batch_size
     )
-    dataset = RMBenchSequentialGroups(manifest, split="train")
-    sampler = FullGroupTaskSampler(dataset, arguments.group_size, arguments.seed, arguments.tasks)
-    if len(sampler.tasks) != 10:
-        raise ValueError("Formal native10 training requires exactly ten tasks with full training groups")
+    arguments.global_batch_size = actual_batch
+    dataset = build_training_dataset(manifest, split="train", history_sampling=arguments.history_sampling, image_aug=arguments.image_aug)
+    sampler = RandomEpisodeSampler(
+        dataset, arguments.group_size, arguments.seed, arguments.tasks,
+        history_sampling=arguments.history_sampling, task_balanced=arguments.sampling_strategy == "task-balanced",
+    )
     configuration = build_policy_configuration(arguments, manifest)
     requested_configuration = configuration.to_dict()
     protocol = build_protocol(arguments, manifest, runtime, sampler, requested_configuration)
@@ -846,7 +959,7 @@ def run_training(arguments, manifest, runtime, run_directory: Path) -> dict:
         "manifest_sha256": manifest["manifest_sha256"],
         "started_at": datetime.now(timezone.utc).isoformat(),
         "visible_gpu_mask": os.environ.get("CUDA_VISIBLE_DEVICES"),
-        "evaluation_episodes_requested": 500,
+        "evaluation_episodes_requested": 0,
         "evaluation_status": "not_run",
     }
     try:
@@ -861,7 +974,7 @@ def run_training(arguments, manifest, runtime, run_directory: Path) -> dict:
                 runtime.world_size,
             )
             with (run_directory / "protocol.json").open(encoding="utf-8") as stream:
-                if json.load(stream) != protocol:
+                if not protocols_match(json.load(stream), protocol):
                     raise ValueError("Run directory protocol differs from the resumed checkpoint")
             if resume_payload["step"] >= arguments.max_steps:
                 raise ValueError("Checkpoint has already reached the complete training budget")
@@ -880,19 +993,14 @@ def run_training(arguments, manifest, runtime, run_directory: Path) -> dict:
         torch.manual_seed(arguments.seed)
         torch.cuda.manual_seed(arguments.seed)
         policy = ChoiceMemoryPolicy(configuration, initialize_from_config=resume_payload is not None)
-        # Qwen loads in bf16, but AdamW must never update bf16 master tensors.
-        policy.float().to(runtime.device).train()
+        # FP32 trainable masters; random debug keeps its frozen VLM in BF16.
+        policy = prepare_training_precision(policy).to(runtime.device).train()
         if resume_payload is not None:
             policy.load_state_dict(resume_payload["model"], strict=True)
         if arguments.gradient_checkpointing:
             enable_gradient_checkpointing(policy)
         optimizer = torch.optim.AdamW(build_optimizer_groups(policy, arguments), weight_decay=arguments.weight_decay)
-        scheduler = CosineWarmupSchedule(
-            optimizer,
-            arguments.max_steps,
-            arguments.warmup_ratio,
-            [arguments.minimum_backbone_learning_rate, arguments.minimum_head_learning_rate],
-        )
+        scheduler = build_schedule(optimizer, arguments)
         distributed_policy = DistributedDataParallel(
             policy,
             device_ids=[runtime.local_rank],

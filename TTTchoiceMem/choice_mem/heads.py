@@ -143,6 +143,8 @@ class DiffusionHead(nn.Module):
         model_type: str = "DiT-S",
         ddim_steps: int = 10,
         cfg_scale: float = 1.5,
+        repeated_diffusion_steps: int = 1,
+        mask_padding_loss: bool = True,
     ):
         super().__init__()
         if min(cognition_dim, perception_dim, horizon, action_dim, ddim_steps) < 1:
@@ -153,8 +155,12 @@ class DiffusionHead(nn.Module):
         self.perception_dim = perception_dim
         self.horizon = horizon
         self.action_dim = action_dim
+        if type(repeated_diffusion_steps) is not int or repeated_diffusion_steps < 1:
+            raise ValueError("repeated_diffusion_steps must be a positive integer")
         self.ddim_steps = ddim_steps
         self.cfg_scale = cfg_scale
+        self.repeated_diffusion_steps = repeated_diffusion_steps
+        self.mask_padding_loss = mask_padding_loss
         self.action_model = ActionModel(
             token_size=cognition_dim,
             model_type=model_type,
@@ -178,10 +184,19 @@ class DiffusionHead(nn.Module):
     ) -> torch.Tensor:
         self._validate_conditions(cognition, perception)
         _validate_actions(actions, cognition.shape[0], self.horizon, self.action_dim)
-        if valid_mask is None:
+        action_mask = (
+            _expand_valid_mask(actions, valid_mask) if self.mask_padding_loss and valid_mask is not None else None
+        )
+        repeats = self.repeated_diffusion_steps
+        cognition = cognition.repeat(repeats, 1, 1)
+        perception = perception.repeat(repeats, 1, 1)
+        actions = actions.repeat(repeats, 1, 1)
+        if action_mask is None:
+            if not torch.isfinite(actions).all():
+                raise ValueError("Unmasked MemoryVLA loss requires finite absolute-action padding")
             return self.action_model.loss(actions, cognition, perception)
 
-        action_mask = _expand_valid_mask(actions, valid_mask)
+        action_mask = action_mask.repeat(repeats, 1, 1)
         safe_actions = torch.where(action_mask, actions, torch.zeros_like(actions))
         # Preserve the original RNG order and noise-prediction objective.
         noise = torch.randn_like(safe_actions)

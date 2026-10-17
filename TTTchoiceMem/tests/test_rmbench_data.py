@@ -9,13 +9,18 @@ import cv2
 import h5py
 import numpy as np
 import pytest
+from PIL import Image
 
+import choice_mem.data as native_data
 import train_rmbench
 from choice_mem.config import PolicyConfig
 from choice_mem.data import (
     CAMERAS,
     TARGET_OFFSET,
+    RMBenchRandomGroups,
     RMBenchSequentialGroups,
+    augment_rgb_image,
+    build_training_dataset,
     decode_rgb_frame,
     denormalize_actions,
     discover_episodes,
@@ -418,3 +423,282 @@ def test_training_requires_explicit_step_budget_before_data_access(tmp_path, cap
     assert "explicit --max-steps" in capsys.readouterr().err
     assert not (tmp_path / "manifest.json").exists()
     assert not (tmp_path / "run").exists()
+
+
+def group_image_bytes(group):
+    return tuple(tuple(image.tobytes() for image in images) for images in group["image_batches"])
+
+
+def test_random_groups_use_entire_episode_without_replacement_and_keep_shifted_absolute_targets(tmp_path):
+    root = tmp_path / "native"
+    actions_by_id = {}
+    for index, length in enumerate((38, 46)):
+        episode_id = f"task/demo_clean/data/episode{index}.hdf5"
+        actions_by_id[episode_id] = create_native_episode(root / episode_id, length=length)
+    manifest = prepare_manifest(
+        root, tmp_path / "random.json", group_size=16, execute_prefix=16, image_size=(8, 10),
+        history_sampling="random", image_aug=False, validation_fraction=0,
+    )
+    dataset = build_training_dataset(manifest, image_aug=False)
+    assert isinstance(dataset, RMBenchRandomGroups)
+    assert len(dataset) == 2  # One group per episode, not disjoint prefix-spaced groups.
+    for index, (record, candidates) in enumerate(dataset.groups):
+        assert candidates == list(range(record["length"] - 1))
+        sampled_timesteps = set()
+        for seed in (0, 1, 2, 3):
+            group = dataset.get_group(index, seed=seed)
+            timesteps = group["timesteps"]
+            assert len(timesteps) == len(set(timesteps)) == 16
+            assert timesteps == sorted(timesteps)
+            assert max(timesteps) <= record["length"] - 2
+            assert set(group["episode_ids"]) == {record["episode_id"]}
+            assert group["history_sampling"] == "random"
+            assert group["image_aug"] is False
+            assert group["raw_actions"].shape == (16, 16, 14)
+            episode_actions = actions_by_id[record["episode_id"]]
+            for query_index, timestep in enumerate(timesteps):
+                real_targets = episode_actions[timestep + 1 : timestep + 17]
+                valid_count = len(real_targets)
+                np.testing.assert_allclose(group["raw_actions"][query_index, :valid_count], real_targets)
+                np.testing.assert_allclose(
+                    group["raw_actions"][query_index, valid_count:],
+                    np.repeat(real_targets[-1:], 16 - valid_count, axis=0),
+                )
+                assert group["valid_mask"][query_index].tolist() == [True] * valid_count + [False] * (16 - valid_count)
+            sampled_timesteps.update(timesteps)
+        assert any(timestep % 16 for timestep in sampled_timesteps)
+        assert len(sampled_timesteps) > 16
+    assert "independent of execute_prefix" in manifest["protocol"]["query_schedule"]
+    assert len(dataset[0]["timesteps"]) == 16
+
+
+@pytest.mark.parametrize("length", [2, 6, 17])
+def test_random_short_episodes_repeat_only_last_valid_query_to_fill_group(tmp_path, length):
+    root = tmp_path / "native"
+    actions = create_native_episode(root / "task/demo_clean/data/episode0.hdf5", length=length)
+    manifest = prepare_manifest(
+        root, tmp_path / "random.json", group_size=16, image_size=(8, 10),
+        history_sampling="random", image_aug=False,
+    )
+    dataset = RMBenchRandomGroups(manifest, image_aug=False)
+    expected_timesteps = list(range(length - 1)) + [length - 2] * (16 - (length - 1))
+    for seed in (3, 21):
+        group = dataset.get_group(0, seed=seed)
+        assert group["timesteps"] == expected_timesteps
+        assert len(group["timesteps"]) == 16
+        assert length - 1 not in group["timesteps"]
+        for index, timestep in enumerate(expected_timesteps):
+            np.testing.assert_allclose(group["raw_actions"][index, 0], actions[timestep + 1])
+        final_index = expected_timesteps.index(length - 2)
+        for index in range(final_index, 16):
+            assert group["valid_mask"][index].tolist() == [True] + [False] * 15
+            np.testing.assert_allclose(group["raw_actions"][index], np.repeat(actions[-1:], 16, axis=0))
+            assert group_image_bytes(group)[index] == group_image_bytes(group)[final_index]
+    assert "repeat the final valid query" in manifest["protocol"]["query_padding"]
+
+
+def test_random_sampling_seed_is_independent_of_execute_prefix(tmp_path):
+    root = tmp_path / "native"
+    create_native_episode(root / "task/demo_clean/data/episode0.hdf5", length=54)
+    datasets = []
+    for prefix in (1, 4, 16):
+        manifest = prepare_manifest(
+            root, tmp_path / f"prefix{prefix}.json", group_size=16, execute_prefix=prefix, image_size=(8, 10),
+            history_sampling="random", image_aug=True,
+        )
+        datasets.append(build_training_dataset(manifest))
+    groups = [dataset.get_group(0, seed=np.uint64(1024)) for dataset in datasets]
+    for group in groups[1:]:
+        assert group["timesteps"] == groups[0]["timesteps"]
+        assert group_image_bytes(group) == group_image_bytes(groups[0])
+        np.testing.assert_array_equal(group["actions"], groups[0]["actions"])
+
+
+def test_seed_reproduces_sampling_and_original_configured_color_crop_augmentation(tmp_path):
+    root = tmp_path / "native"
+    create_native_episode(root / "task/demo_clean/data/episode0.hdf5", length=44)
+    manifest = prepare_manifest(
+        root, tmp_path / "augmented.json", group_size=16, image_size=(12, 18),
+        history_sampling="random", image_aug=True,
+    )
+    dataset = build_training_dataset(manifest)
+    group = dataset.get_group(index=0, seed=1234)
+    repeated = dataset.get_group(index=0, seed=1234)
+    changed = dataset.get_group(0, seed=1235)
+    assert group["timesteps"] == repeated["timesteps"]
+    assert group_image_bytes(group) == group_image_bytes(repeated)
+    np.testing.assert_array_equal(group["actions"], repeated["actions"])
+    assert group_image_bytes(group) != group_image_bytes(changed)
+    assert all(image.size == (18, 12) and image.mode == "RGB" for images in group["image_batches"] for image in images)
+    metadata = manifest["protocol"]["image_augmentation"]
+    assert metadata["train_only"] is True
+    assert metadata["validation_enabled"] is False
+    assert "NOT bitwise TensorFlow/dlimp equivalent" in metadata["equivalence"]
+    assert metadata["parameters"] == {
+        "random_resized_crop": {"scale": [0.9, 0.9], "ratio": [1.0, 1.0]},
+        "random_brightness": [0.2], "random_contrast": [0.8, 1.2],
+        "random_saturation": [0.8, 1.2], "random_hue": [0.05],
+        "augment_order": [
+            "random_resized_crop", "random_brightness", "random_contrast", "random_saturation", "random_hue",
+        ],
+    }
+    plain_manifest = prepare_manifest(
+        root, tmp_path / "plain.json", group_size=16, image_size=(12, 18),
+        history_sampling="random", image_aug=False,
+    )
+    plain_group = build_training_dataset(plain_manifest, image_aug=False).get_group(0, seed=1234)
+    assert plain_group["timesteps"] == group["timesteps"]
+    assert group_image_bytes(plain_group) != group_image_bytes(group)
+    assert plain_manifest["normalization"] == manifest["normalization"]
+    assert plain_manifest["episodes"] == manifest["episodes"]
+
+
+def test_crop_uses_dlimp_normalized_box_coordinates_and_keeps_nonsquare_shape(monkeypatch):
+    image = Image.fromarray(np.arange(8 * 10 * 3, dtype=np.uint8).reshape(8, 10, 3))
+    original_resize = Image.Image.resize
+    resize_calls = []
+
+    def record_resize(image, size, *args, **kwargs):
+        resize_calls.append((image.size, size, kwargs.get("box")))
+        return original_resize(image, size, *args, **kwargs)
+
+    monkeypatch.setattr(Image.Image, "resize", record_resize)
+    augmented = augment_rgb_image(image, np.random.default_rng(42))
+    assert augmented.size == image.size == (10, 8)
+    assert len(resize_calls) == 1
+    source_size, target_size, (left, top, right, bottom) = resize_calls[0]
+    assert source_size == target_size == (10, 8)
+    np.testing.assert_allclose((right - left) / 10, np.sqrt(0.9), rtol=0, atol=1e-12)
+    np.testing.assert_allclose((bottom - top) / 8, np.sqrt(0.9), rtol=0, atol=1e-12)
+    assert 0 <= left < right <= 10
+    assert 0 <= top < bottom <= 8
+
+
+def test_random_validation_is_never_augmented_even_when_training_protocol_enables_it(tmp_path):
+    root = tmp_path / "native"
+    for index in range(3):
+        create_native_episode(root / "task/demo_clean/data" / f"episode{index}.hdf5", length=22)
+    manifest = prepare_manifest(
+        root, tmp_path / "manifest.json", group_size=16, image_size=(8, 10),
+        history_sampling="random", image_aug=True, validation_fraction=0.34,
+    )
+    dataset = build_training_dataset(manifest, split="validation")
+    explicit_no_aug = build_training_dataset(manifest, split="validation", image_aug=False)
+    assert len(dataset) == 1
+    assert dataset.image_aug is False
+    group = dataset.get_group(0, seed=88)
+    assert group["image_aug"] is False
+    assert group["image_augmentation"]["enabled"] is False
+    assert group_image_bytes(group) == group_image_bytes(explicit_no_aug.get_group(0, seed=88))
+    record = dataset.groups[0][0]
+    with h5py.File(root / record["relative_path"], "r") as handle:
+        for timestep, images in zip(group["timesteps"], group["image_batches"], strict=True):
+            for camera, image in zip(manifest["protocol"]["cameras"], images, strict=True):
+                expected = decode_rgb_frame(handle[f"observation/{camera}/rgb"][timestep])
+                np.testing.assert_array_equal(np.asarray(image), np.asarray(expected))
+    assert record["episode_id"] not in manifest["normalization"]["training_episode_ids"]
+
+
+def test_random_iter_epoch_reproduces_episode_order_draws_and_augmentation(tmp_path):
+    root = tmp_path / "native"
+    for index in range(4):
+        create_native_episode(root / "task/demo_clean/data" / f"episode{index}.hdf5", length=37)
+    manifest = prepare_manifest(
+        root, tmp_path / "manifest.json", group_size=16, image_size=(8, 10), validation_fraction=0,
+        history_sampling="random", image_aug=True,
+    )
+    dataset = build_training_dataset(manifest)
+
+    def snapshots(epoch, seed):
+        return [
+            (group["episode_ids"][0], group["timesteps"], group_image_bytes(group))
+            for group in dataset.iter_epoch(epoch=epoch, seed=seed)
+        ]
+
+    first = snapshots(2, 99)
+    assert snapshots(2, 99) == first
+    assert snapshots(3, 99) != first
+    assert snapshots(2, 100) != first
+    expected_indices = np.random.default_rng(np.random.SeedSequence([99, 2])).permutation(len(dataset))
+    assert [episode_id for episode_id, _timesteps, _images in first] == [
+        dataset.groups[int(index)][0]["episode_id"] for index in expected_indices
+    ]
+    assert len({episode_id for episode_id, _timesteps, _images in first}) == 4
+
+
+def test_legacy_manifest_keeps_original_digest_and_requires_explicit_legacy_factory(tmp_path):
+    root = tmp_path / "native"
+    create_native_episode(root / "task/demo_clean/data/episode0.hdf5")
+    path = tmp_path / "legacy.json"
+    manifest = prepare_manifest(root, path)
+    assert "history_sampling" not in manifest["protocol"]
+    assert "image_aug" not in manifest["protocol"]
+    assert "image_augmentation" not in manifest["protocol"]
+    original_bytes = path.read_bytes()
+    original_digest = manifest["manifest_sha256"]
+    assert prepare_manifest(root, path, history_sampling="sequential", image_aug=False) == manifest
+    assert path.read_bytes() == original_bytes
+    assert manifest["manifest_sha256"] == original_digest
+    with pytest.raises(ValueError, match="Legacy manifests mean sequential/no augmentation"):
+        build_training_dataset(manifest)
+    with pytest.raises(ValueError, match="new manifest path"):
+        prepare_manifest(root, path, history_sampling="random", image_aug=True)
+    assert path.read_bytes() == original_bytes
+    dataset = build_training_dataset(manifest, history_sampling="sequential", image_aug=False)
+    assert isinstance(dataset, RMBenchSequentialGroups)
+    assert dataset.get_group(0, seed=1)["timesteps"] == dataset[0]["timesteps"] == [0, 4, 8, 12]
+    assert group_image_bytes(dataset.get_group(0, seed=1)) == group_image_bytes(dataset.get_group(0, seed=2))
+
+
+def test_new_manifest_protocol_changes_are_fail_closed_and_never_rewritten(tmp_path):
+    root = tmp_path / "native"
+    create_native_episode(root / "task/demo_clean/data/episode0.hdf5")
+    path = tmp_path / "random.json"
+    manifest = prepare_manifest(root, path, history_sampling="random", image_aug=True)
+    original_bytes = path.read_bytes()
+    assert prepare_manifest(root, path, history_sampling="random", image_aug=True) == manifest
+    for kwargs in (
+        {}, {"history_sampling": "random", "image_aug": False},
+        {"history_sampling": "sequential", "image_aug": True},
+    ):
+        with pytest.raises(ValueError, match="protocol differs"):
+            prepare_manifest(root, path, **kwargs)
+        assert path.read_bytes() == original_bytes
+    with pytest.raises(ValueError, match="protocol differs"):
+        build_training_dataset(manifest, image_aug=False)
+    with pytest.raises(ValueError, match="protocol differs"):
+        RMBenchSequentialGroups(manifest)
+    with pytest.raises(ValueError, match="history_sampling must"):
+        build_training_dataset(manifest, history_sampling="prefix")
+    with pytest.raises(ValueError, match="image_aug must"):
+        prepare_manifest(root, tmp_path / "bad.json", image_aug="True")
+    assert not (tmp_path / "bad.json").exists()
+
+
+def test_codec_fallback_explicit_path_and_environment_preserve_native_hash(tmp_path, monkeypatch):
+    codec_path = Path(load_image_codec().__file__).resolve()
+    assert codec_path.is_file()
+    root = tmp_path / "native"
+    create_native_episode(root / "task/demo_clean/data/episode0.hdf5")
+    monkeypatch.setattr(native_data, "CODEC_PATH", tmp_path / "missing-sibling/decode_image_bit.py")
+    monkeypatch.delenv("RMBENCH_CODEC_PATH", raising=False)
+    assert native_data.resolve_codec_path().is_file()
+    assert native_data.hash_file(native_data.resolve_codec_path()) == native_data.hash_file(codec_path)
+    monkeypatch.setenv("RMBENCH_CODEC_PATH", str(tmp_path / "missing-override.py"))
+    with pytest.raises(FileNotFoundError, match="Explicit native RMBench RGB codec"):
+        load_image_codec()
+    assert Path(load_image_codec(codec_path).__file__).resolve() == codec_path  # Explicit path wins.
+    manifest_path = tmp_path / "manifest.json"
+    manifest = prepare_manifest(root, manifest_path, codec_path=codec_path)
+    assert manifest["codec"] == {"path": str(codec_path), "sha256": native_data.hash_file(codec_path)}
+    assert RMBenchSequentialGroups(manifest, codec_path=codec_path)[0]["image_batches"]
+    monkeypatch.setenv("RMBENCH_CODEC_PATH", str(codec_path))
+    assert prepare_manifest(root, manifest_path) == manifest
+    different_codec = tmp_path / "different-codec.py"
+    different_codec.write_text("raise AssertionError('a mismatched codec must not be executed')\n")
+    with pytest.raises(ValueError, match="Native RGB codec changed"):
+        RMBenchSequentialGroups(manifest, codec_path=different_codec)
+    original_bytes = manifest_path.read_bytes()
+    with pytest.raises(ValueError, match="Native RGB codec changed"):
+        prepare_manifest(root, manifest_path, codec_path=different_codec)
+    assert manifest_path.read_bytes() == original_bytes

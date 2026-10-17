@@ -109,11 +109,22 @@ class HFCausalLLMBackbone(LLMBackbone, ABC):
         hf_token: Optional[str] = None,
         inference_mode: bool = False,
         use_flash_attention_2: bool = False,
+        local_files_only: bool = False,
+        torch_dtype: Optional[torch.dtype] = None,
+        attn_implementation: Optional[str] = None,
+        use_cache: Optional[bool] = None,
     ) -> None:
         super().__init__(llm_backbone_id)
         self.llm_family = llm_family
         self.llm_max_length = llm_max_length
         self.inference_mode = inference_mode
+
+        source_options = {"local_files_only": True, "trust_remote_code": False} if local_files_only else {}
+        construction_options = {}
+        if torch_dtype is not None:
+            construction_options["torch_dtype"] = torch_dtype
+        if attn_implementation is not None:
+            construction_options["attn_implementation"] = attn_implementation
 
         # Initialize LLM (downloading from HF Hub if necessary) --> `llm_cls` is the actual {Model}ForCausalLM class!
         #   => Note: We're eschewing use of the AutoModel API so that we can be more explicit about LLM-specific details
@@ -127,19 +138,23 @@ class HFCausalLLMBackbone(LLMBackbone, ABC):
                 do_sample=False,
                 temperature=1.0,
                 top_p=1.0,
+                **source_options,
+                **construction_options,
             )
 
         # [Contract] `inference_mode` means we're loading from a pretrained checkpoint; no need to load base weights!
         else:
             overwatch.info(f"Building empty [bold]{llm_family}[/] LLM from [underline]`{hf_hub_path}`[/]", ctx_level=1)
-            llm_config = AutoConfig.from_pretrained(hf_hub_path, token=hf_token)
-            self.llm = llm_cls._from_config(llm_config)
+            llm_config = AutoConfig.from_pretrained(hf_hub_path, token=hf_token, **source_options)
+            if use_cache is not None:
+                llm_config.use_cache = use_cache
+            self.llm = llm_cls._from_config(llm_config, **construction_options)
 
         # Lightweight Handling (with extended explanation) for setting some LLM Parameters
         #   => Set `decoder.use_cache = False` --> incompatible with gradient checkpointing (+ training in general)
         #
         #      Reference: https://discuss.huggingface.co/t/what-is-the-purpose-of-use-cache-in-decoder/958
-        self.llm.config.use_cache = False if not self.inference_mode else True
+        self.llm.config.use_cache = (False if not self.inference_mode else True) if use_cache is None else use_cache
 
         #   => Turns out that when gradient checkpointing is on and the underlying LLM has no "trainable" parameters
         #      (requires_grad is False), backprop will fail; setting `enable_input_requires_grad()` registers a new
@@ -150,7 +165,8 @@ class HFCausalLLMBackbone(LLMBackbone, ABC):
         # Load (Fast) Tokenizer
         overwatch.info(f"Loading [bold]{llm_family}[/] (Fast) Tokenizer via the AutoTokenizer API", ctx_level=1)
         self.tokenizer = AutoTokenizer.from_pretrained(
-            hf_hub_path, model_max_length=self.llm_max_length, token=hf_token, padding_side="right"
+            hf_hub_path, model_max_length=self.llm_max_length, token=hf_token, padding_side="right",
+            **source_options,
         )
 
         # Validation =>> Our VLM logic currently operates under the assumption that the tokenization of a new input

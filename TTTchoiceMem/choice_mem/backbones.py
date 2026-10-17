@@ -34,14 +34,13 @@ def prepare_images(image_batches, config):
     for image_batch in image_batches:
         if len(image_batch) != len(config.cameras):
             raise ValueError("Every query must contain the checkpoint's ordered cameras")
-        prepared.append(
-            [
-                (image if isinstance(image, Image.Image) else Image.fromarray(image))
-                .convert("RGB")
-                .resize((width, height), resample=Image.Resampling.BILINEAR)
-                for image in image_batch
-            ]
-        )
+        cameras = []
+        for image in image_batch:
+            image = (image if isinstance(image, Image.Image) else Image.fromarray(image)).convert("RGB")
+            if image.size != (width, height):
+                image = image.resize((width, height), resample=Image.Resampling.BILINEAR)
+            cameras.append(image)
+        prepared.append(cameras)
     return prepared
 
 
@@ -195,9 +194,19 @@ class MemoryVLABackbone(nn.Module):
     def __init__(self, config: PolicyConfig, initialize_from_config=False):
         super().__init__()
         self.policy_config = config
-        source_path = Path(config.model_source)
+        if not config.model_source or str(config.model_source).startswith("Qwen/"):
+            raise ValueError("MemoryVLA requires an explicit original VLM run, VLA checkpoint, or audited asset manifest")
+        random_debug = config.backbone_initialization == "random-frozen-debug"
+        if random_debug:
+            self._initialize_random_debug(config)
+            return
+        source_path = Path(config.model_source).expanduser()
+        if source_path.is_absolute() and not source_path.exists():
+            raise FileNotFoundError(f"Original MemoryVLA assets do not exist: {source_path}")
         if source_path.is_file() and source_path.suffix == ".json":
             self.vlm, manifest = self.load_from_asset_manifest(source_path)
+        elif source_path.is_file() and source_path.suffix == ".pt":
+            self.vlm, manifest = self.load_from_vla_checkpoint(source_path)
         else:
             from vla.load import load
 
@@ -227,12 +236,145 @@ class MemoryVLABackbone(nn.Module):
             raise ValueError("MemoryVLA preprocessing differs from checkpoint")
         config.preprocessing = preprocessing
 
+    def _initialize_random_debug(self, config):
+        """Build the original registry architecture using audited metadata, not weights."""
+        # Recheck the strict recipe even if a caller mutated a dataclass after creation.
+        config.__post_init__()
+        from .random_init import inspect_random_backbone_assets
+
+        assets = inspect_random_backbone_assets(config.model_source)
+        manifest = assets["asset_manifest"]
+        if config.asset_manifest and config.asset_manifest != manifest:
+            raise ValueError("Random MemoryVLA metadata differs from recorded source SHA256")
+        llama_config = assets["llama_config"]
+        original_shape = {
+            "hidden_size": 4096, "intermediate_size": 11008,
+            "num_hidden_layers": 32, "num_attention_heads": 32, "vocab_size": 32000,
+        }
+        if any(llama_config.get(key) != value for key, value in original_shape.items()):
+            raise ValueError("random-frozen-debug requires original Llama-2 7B config dimensions")
+        if llama_config.get("num_key_value_heads", 32) != 32:
+            raise ValueError("random-frozen-debug requires original Llama-2 7B attention heads")
+
+        # Imports and all model allocation happen only after the metadata audit.
+        import random
+        from unittest.mock import patch
+
+        import numpy as np
+
+        from prismatic.conf import ModelConfig
+        from prismatic.models.materialize import get_llm_backbone_and_tokenizer, get_vision_backbone_and_transform
+        from prismatic.models.vlms.prismatic import PrismaticVLM
+
+        model_config = ModelConfig.get_choice_class(config.base_vlm_id)()
+        python_state, numpy_state = random.getstate(), np.random.get_state()
+        try:
+            # Constructors run on CPU. PrismaticVLM calls torch.manual_seed for
+            # its original projector rule; restrict that call to the CPU generator
+            # so it cannot reseed CUDA or enqueue a lazy CUDA seed as a side effect.
+            # fork_rng restores the caller's CPU state even if construction fails.
+            with torch.random.fork_rng(devices=[]), torch.device("cpu"), patch(
+                "torch.manual_seed", torch.random.default_generator.manual_seed
+            ):
+                torch.manual_seed(config.backbone_initialization_seed)
+                random.seed(config.backbone_initialization_seed)
+                np.random.seed(config.backbone_initialization_seed % 2**32)
+                vision, _ = get_vision_backbone_and_transform(
+                    model_config.vision_backbone_id, model_config.image_resize_strategy, pretrained=False
+                )
+                vision.to(dtype=torch.bfloat16)
+                language, _ = get_llm_backbone_and_tokenizer(
+                    model_config.llm_backbone_id,
+                    llm_max_length=model_config.llm_max_length,
+                    inference_mode=True,
+                    hf_hub_path=assets["metadata_path"],
+                    local_files_only=True,
+                    torch_dtype=torch.bfloat16,
+                    attn_implementation="sdpa",
+                    use_cache=False,
+                )
+                self.vlm = PrismaticVLM(
+                    model_config.model_id, vision, language, arch_specifier=model_config.arch_specifier
+                )
+                self.vlm.to(dtype=torch.bfloat16)
+        finally:
+            random.setstate(python_state)
+            np.random.set_state(numpy_state)
+        self.vlm.requires_grad_(False)
+        self.vlm.eval()
+        self.vision_dim = int(self.vlm.vision_backbone.embed_dim)
+        self.cognition_dim = int(self.vlm.llm_backbone.embed_dim)
+        dimensions = {"vision": self.vision_dim, "cognition": self.cognition_dim}
+        if config.feature_dimensions and config.feature_dimensions != dimensions:
+            raise ValueError("Actual backbone dimensions differ from checkpoint")
+        recipe = {
+            "mode": "random-frozen-debug", "recipe_version": 1,
+            "base_vlm_id": config.base_vlm_id, "seed": config.backbone_initialization_seed,
+            "vision_backbone_id": model_config.vision_backbone_id,
+            "llm_backbone_id": model_config.llm_backbone_id,
+            "image_resize_strategy": model_config.image_resize_strategy,
+            "arch_specifier": model_config.arch_specifier, "llm_max_length": model_config.llm_max_length,
+            "vision_pretrained": False, "llm_initialization": "local-config-only",
+            "weights_loaded": False, "dtype": "bfloat16", "attention": "sdpa", "use_cache": False,
+            "projector_seed_rule": "torch.manual_seed(vision_backbone.embed_dim)",
+            "projector_seed": self.vision_dim, "torch_version": str(torch.__version__),
+        }
+        revision_payload = json.dumps({"recipe": recipe, "assets": manifest}, sort_keys=True).encode()
+        revision = "random-frozen-debug-v1-sha256:" + hashlib.sha256(revision_payload).hexdigest()
+        if config.model_revision is not None and config.model_revision != revision:
+            raise ValueError("Random MemoryVLA recipe differs from recorded model_revision")
+        preprocessing = {
+            "backend": "memoryvla-original-image-transform",
+            "shared_resize": config.image_size,
+            "image_transform": repr(self.vlm.vision_backbone.image_transform),
+            "prompt": "original-prismatic-human-action-question-plus-29871-2",
+            "use_cache": False,
+            "backbone_initialization": recipe,
+        }
+        if config.preprocessing and config.preprocessing != preprocessing:
+            raise ValueError("MemoryVLA preprocessing differs from checkpoint")
+        config.asset_manifest = manifest
+        config.model_revision = revision
+        config.preprocessing = preprocessing
+        config.feature_dimensions = dimensions
+
+    @staticmethod
+    def load_from_vla_checkpoint(checkpoint_path):
+        """Reuse only VLM modules from an upstream VLA run, on CPU.
+
+        Its 7D action head, banks and action statistics are intentionally not
+        loaded: the RMBench policy initializes its own 14D modules and statistics.
+        Use the audited manifest path for fully local vision/tokenizer assets.
+        """
+        configuration_path = checkpoint_path.parent.parent / "config.json"
+        if not configuration_path.is_file():
+            raise FileNotFoundError(f"Original VLA checkpoint requires run/config.json: {configuration_path}")
+        configuration = json.loads(configuration_path.read_text())
+        if "base_vlm" not in configuration.get("vla", {}):
+            raise ValueError("Original VLA config.json must contain vla.base_vlm")
+        from prismatic.conf import ModelConfig
+        from prismatic.models.materialize import get_llm_backbone_and_tokenizer, get_vision_backbone_and_transform
+        from prismatic.models.vlms.prismatic import PrismaticVLM
+
+        model_config = ModelConfig.get_choice_class(configuration["vla"]["base_vlm"])()
+        vision, _ = get_vision_backbone_and_transform(
+            model_config.vision_backbone_id, model_config.image_resize_strategy
+        )
+        language, _ = get_llm_backbone_and_tokenizer(
+            model_config.llm_backbone_id, llm_max_length=model_config.llm_max_length, inference_mode=True
+        )
+        vlm = PrismaticVLM(model_config.model_id, vision, language, arch_specifier=model_config.arch_specifier)
+        state = torch.load(checkpoint_path, map_location="cpu", mmap=True, weights_only=True)["model"]
+        if not {"projector", "llm_backbone"}.issubset(state):
+            raise ValueError("Original checkpoint lacks the required VLM modules")
+        for name in ("projector", "llm_backbone", "vision_backbone"):
+            if name in state:
+                getattr(vlm, name).load_state_dict(state[name], strict=True)
+        return vlm, {"config.json": hash_file(configuration_path), "checkpoint": hash_file(checkpoint_path)}
+
     @staticmethod
     def load_from_asset_manifest(manifest_path):
         """Reuse locally audited VLM weights, never import its old banks/head."""
-        import os
-
-        os.environ.setdefault("TEMPORARILY_DISABLE_PROTOBUF_VERSION_CHECK", "true")
         import tensorflow as tensorflow
 
         tensorflow.config.set_visible_devices([], "GPU")
@@ -248,7 +390,10 @@ class MemoryVLABackbone(nn.Module):
         recorded_hashes = {"manifest": hash_file(manifest_path), "checkpoint": hash_file(checkpoint_path)}
         if recorded_hashes["checkpoint"] != source_manifest["checkpoint_sha256"]:
             raise ValueError("Original MemoryVLA source checkpoint SHA256 mismatch")
-        source_config = json.loads(Path(source_manifest["config.json"]["path"]).read_text())
+        source_config_path = Path(source_manifest["config.json"]["path"])
+        if hash_file(source_config_path) != source_manifest["config.json"]["sha256"]:
+            raise ValueError("Original MemoryVLA source config SHA256 mismatch")
+        source_config = json.loads(source_config_path.read_text())
         model_config = ModelConfig.get_choice_class(source_config["vla"]["base_vlm"])()
         previous_llama_source = LLAMA2_MODELS[model_config.llm_backbone_id]["hf_hub_path"]
         original_factory = timm.create_model
@@ -287,10 +432,12 @@ class MemoryVLABackbone(nn.Module):
             timm.create_model = original_factory
         for model_name, asset_path in source_manifest["local_vision_files"].items():
             recorded_hashes[model_name] = hash_file(Path(asset_path))
-        for file_name in source_manifest["llama_metadata"]["files"]:
+        for file_name, expected_hash in source_manifest["llama_metadata"]["files"].items():
             recorded_hashes["llama/" + file_name] = hash_file(
                 Path(source_manifest["llama_metadata"]["path"]) / file_name
             )
+            if recorded_hashes["llama/" + file_name] != expected_hash:
+                raise ValueError(f"Original Llama metadata SHA256 mismatch: {file_name}")
         return vlm, recorded_hashes
 
     def train(self, mode=True):
@@ -301,6 +448,11 @@ class MemoryVLABackbone(nn.Module):
 
     def reset(self):
         self.vlm.vision_feats = None
+
+    def enable_gradient_checkpointing(self):
+        self.vlm.llm_backbone.llm.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
 
     def forward(self, image_batches, instructions):
         image_batches = prepare_images(image_batches, self.policy_config)
