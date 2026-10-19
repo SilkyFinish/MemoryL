@@ -66,6 +66,16 @@ def validate_model_source(backbone: str, model_path: str | None, backbone_initia
     """Validate local assets without torch; debug follows metadata only, never weights."""
     if not model_path:
         raise ValueError("Training requires an explicit --model-path; MemoryVLA never falls back to Qwen")
+    if backbone == "turbo_interaction":
+        if backbone_initialization not in {"pretrained", "turbo-random-frozen-debug"}:
+            raise ValueError("turbo_interaction requires pretrained or turbo-random-frozen-debug initialization")
+        from choice_mem.turbo_assets import inspect_turbo_assets
+
+        source = Path(model_path).expanduser()
+        if not source.is_absolute():
+            raise ValueError("turbo_interaction requires an absolute local --model-path manifest JSON")
+        inspect_turbo_assets(str(source), initialization=backbone_initialization)
+        return str(source)
     if backbone_initialization == "random-frozen-debug":
         if backbone != "memoryvla":
             raise ValueError("random-frozen-debug requires --backbone memoryvla")
@@ -204,12 +214,12 @@ def positive_integer(value: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = TrainingArgumentParser(description=__doc__)
-    parser.add_argument("--backbone", choices=["memoryvla", "qwen35"], default="memoryvla")
+    parser.add_argument("--backbone", choices=["memoryvla", "qwen35", "turbo_interaction"], default="memoryvla")
     parser.add_argument("--action-head", choices=["diffusion", "oft"], default="diffusion")
-    parser.add_argument("--model-path", default=None, help="Explicit local original MemoryVLA assets; Qwen only with --backbone qwen35")
+    parser.add_argument("--model-path", default=None, help="Explicit original MemoryVLA assets, Turbo asset manifest, or Qwen source with --backbone qwen35")
     parser.add_argument("--model-revision", default=None)
-    parser.add_argument("--backbone-initialization", choices=["pretrained", "random-frozen-debug"], default="pretrained",
-                        help="Debug uses random frozen MemoryVLA weights and local metadata only; requires explicit --freeze-backbone")
+    parser.add_argument("--backbone-initialization", choices=["pretrained", "random-frozen-debug", "turbo-random-frozen-debug"], default="pretrained",
+                        help="Distinct original/Turbo debug architectures use metadata only and require explicit --freeze-backbone")
     parser.add_argument("--backbone-initialization-seed", type=int, default=42)
     parser.add_argument("--base-vlm-id", default="prism-dinosiglip-224px+7b")
     parser.add_argument("--data-root", type=Path, required=True)
@@ -505,6 +515,8 @@ def main(argv: list[str] | None = None) -> dict:
         validate_output_path(arguments.manifest, "--manifest")
         if arguments.run_dir is not None:
             validate_output_path(arguments.run_dir, "--run-dir")
+        if arguments.prepare_only and arguments.backbone == "turbo_interaction":
+            arguments.model_path = validate_model_source(arguments.backbone, arguments.model_path, arguments.backbone_initialization)
     except ValueError as error:
         parser.error(str(error))
     if not arguments.prepare_only:

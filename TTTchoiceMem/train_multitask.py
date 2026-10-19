@@ -28,6 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
+from choice_mem.config import debug_precision_metadata
 from choice_mem.data import build_training_dataset, prepare_manifest
 from train_rmbench import build_parser as build_rmbench_parser
 from train_rmbench import (
@@ -85,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--find-unused-parameters",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Conservative for version-dependent Qwen branches; zero-initialized DiT gradients are not unused",
+        help="Required for Turbo full-finetuning's final visual-update branch; conservative for Qwen; zero DiT gradients are not unused",
     )
     parser.add_argument("--save-every", type=positive_integer, default=1000)
     parser.add_argument("--snapshot-every", type=positive_integer, default=5000)
@@ -97,6 +98,11 @@ def validate_arguments(arguments: argparse.Namespace) -> None:
 
     validate_cameras(arguments.cameras)
     validate_optimization(arguments)
+    if (arguments.backbone == "turbo_interaction" and arguments.unfreeze_backbone
+            and not arguments.find_unused_parameters):
+        # Only fused text feeds Cog; the final fusion's visual-update output
+        # is intentionally discarded while raw original vision feeds Per.
+        raise ValueError("Turbo full-finetuning requires --find-unused-parameters for the unused final visual-update branch")
     validate_output_path(arguments.manifest, "--manifest")
     if arguments.run_dir is not None:
         validate_output_path(arguments.run_dir, "--run-dir")
@@ -109,6 +115,9 @@ def validate_arguments(arguments: argparse.Namespace) -> None:
             raise ValueError("Training requires explicit --max-steps; there is no implicit training budget")
         if arguments.run_dir is None:
             raise ValueError("Training requires --run-dir; new runs cannot reuse an existing directory")
+        arguments.model_path = validate_model_source(arguments.backbone, arguments.model_path, arguments.backbone_initialization)
+    elif arguments.backbone == "turbo_interaction":
+        # Preparation audits Turbo's local metadata/manifest without importing torch.
         arguments.model_path = validate_model_source(arguments.backbone, arguments.model_path, arguments.backbone_initialization)
     if arguments.tasks is not None and (not arguments.tasks or len(set(arguments.tasks)) != len(arguments.tasks)):
         raise ValueError("--tasks must specify nonempty distinct canonical native tasks")
@@ -413,9 +422,11 @@ def enable_gradient_checkpointing(policy) -> None:
     if getattr(getattr(policy, "config", None), "freeze_backbone", False):
         raise ValueError("Gradient checkpointing conflicts with a frozen backbone; omit --gradient-checkpointing")
     enable_backbone = getattr(policy.backbone, "enable_gradient_checkpointing", None)
-    if enable_backbone is not None:
+    if callable(enable_backbone):
         enable_backbone()
         return
+    if getattr(getattr(policy, "config", None), "backbone", None) == "turbo_interaction":
+        raise ValueError("Turbo gradient checkpointing requires an adapter enable_gradient_checkpointing implementation")
     model = policy.backbone.model
     enable_function = getattr(model, "gradient_checkpointing_enable", None)
     if enable_function is None:
@@ -428,8 +439,20 @@ def enable_gradient_checkpointing(policy) -> None:
         model.config.text_config.use_cache = False
 
 
+TURBO_GRADIENT_MODULES = {
+    "bert": "backbone_bert",
+    "text_projection": "backbone_text_projection",
+    "vision_language_interaction": "backbone_vision_language_interaction",
+    "cognition_projection": "backbone_cognition_projection",
+    "vision_projection": "backbone_vision_projection",
+}
+
+
 def gradient_module(parameter_name: str) -> str:
     if parameter_name.startswith("backbone."):
+        component = parameter_name.split(".", 2)[1]
+        if component in TURBO_GRADIENT_MODULES:
+            return TURBO_GRADIENT_MODULES[component]
         if ".visual." in parameter_name or ".vision_backbone." in parameter_name:
             return "backbone_vision"
         if ".language_model." in parameter_name or ".llm_backbone." in parameter_name:
@@ -463,7 +486,7 @@ def collect_gradient_diagnostics(policy) -> dict:
 
 
 def capture_weight_probes(policy) -> dict:
-    candidates = {"backbone_vision": [], "backbone_language": []}
+    candidates = {name: [] for name in ("backbone_vision", "backbone_language", *TURBO_GRADIENT_MODULES.values())}
     for parameter_name, parameter in policy.named_parameters():
         module_name = gradient_module(parameter_name)
         if module_name in candidates and parameter.requires_grad and parameter.ndim >= 2:
@@ -713,6 +736,9 @@ def build_protocol(arguments, manifest, runtime, sampler, requested_configuratio
     requested_configuration = configuration_with_initialization_defaults(requested_configuration)
     return {
         **manifest["protocol"],
+        # Match save_checkpoint's Turbo provenance before strict resume compares
+        # protocols; leave historical MemoryVLA/Qwen protocol shapes unchanged.
+        **({"backbone": "turbo_interaction"} if requested_configuration.get("backbone") == "turbo_interaction" else {}),
         "trainer": TRAINING_STATE_SCHEMA,
         "manifest_path": str(arguments.manifest.expanduser().absolute()),
         "manifest_sha256": manifest["manifest_sha256"],
@@ -749,7 +775,7 @@ def build_protocol(arguments, manifest, runtime, sampler, requested_configuratio
             "global_batch_size": arguments.global_batch_size,
             "training_seed": arguments.seed,
             "master_dtype": "float32",  # Trainable optimizer masters, not every model parameter.
-            **({"frozen_backbone_dtype": "bfloat16"} if arguments.backbone_initialization == "random-frozen-debug" else {}),
+            **debug_precision_metadata(arguments.backbone_initialization, arguments.dtype),
             "autocast_dtype": arguments.dtype,
             "gradient_checkpointing": arguments.gradient_checkpointing,
             "find_unused_parameters": arguments.find_unused_parameters,
@@ -798,7 +824,10 @@ def validate_resume_payload(payload, requested_configuration, protocol, normaliz
         raise ValueError("Checkpoint independent memory-group sampler position mismatch")
     if "weight_probes" not in state:
         raise ValueError("Resumable checkpoint must preserve initial-weight probes (empty when backbone is frozen)")
-    if not requested_configuration.get("freeze_backbone", False) and not {"backbone_vision", "backbone_language"}.issubset(state["weight_probes"]):
+    required_probes = {"backbone_vision", "backbone_language"}
+    if requested_configuration.get("backbone") == "turbo_interaction":
+        required_probes = {"backbone_vision", *TURBO_GRADIENT_MODULES.values()}
+    if not requested_configuration.get("freeze_backbone", False) and not required_probes.issubset(state["weight_probes"]):
         raise ValueError("Resumable full-finetune checkpoint must preserve actual backbone initial-weight probes")
     if state.get("sampler") != protocol.get("sampling"):
         raise ValueError("Checkpoint sampler definition mismatch")

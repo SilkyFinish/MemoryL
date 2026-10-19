@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .config import validate_cameras
+from .config import is_debug_initialization, validate_cameras
 
 DEFAULT_RMBENCH_ROOT = Path("/mnt/data/dylan/d2/memory/RMBench")
 # Audited in RMBench/scripts/eval_policy_xpolicylab.py:CAMERA_NAME_MAP.
@@ -72,7 +72,7 @@ class ModelWrapper:
         if not isinstance(self.protocol, Mapping) or not isinstance(self.normalization, Mapping):
             raise ValueError("Checkpoint protocol and normalization must be mappings")
         configuration = self.config.to_dict() if hasattr(self.config, "to_dict") else vars(self.config)
-        if configuration.get("backbone_initialization", "pretrained") == "random-frozen-debug":
+        if is_debug_initialization(configuration.get("backbone_initialization", "pretrained")):
             if allow_debug_checkpoint is not True:
                 raise ValueError("Debug checkpoint requires explicit allow_debug_checkpoint=True")
             from .checkpoint import validate_initialization_contract

@@ -35,6 +35,8 @@ import tempfile
 import threading
 import time
 
+from choice_mem.config import debug_parameter_dtype, debug_precision_metadata, is_debug_initialization
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_RMBENCH_ROOT = Path("/mnt/data/dylan/d2/memory/RMBench")
 EPISODES_PER_TASK = 50
@@ -326,8 +328,8 @@ class EvaluationConfig:
         require_positive_integer(self.expected_training_steps, "expected_training_steps")
         if self.expected_action_head not in {"diffusion", "oft"}:
             raise ValueError("Expected action head must be diffusion or oft")
-        if self.expected_backbone is not None and self.expected_backbone not in {"memoryvla", "qwen35"}:
-            raise ValueError("Expected backbone must be memoryvla or qwen35")
+        if self.expected_backbone is not None and self.expected_backbone not in {"memoryvla", "qwen35", "turbo_interaction"}:
+            raise ValueError("Expected backbone must be memoryvla, qwen35 or turbo_interaction")
         if type(self.workers_per_gpu) is not int or not 1 <= self.workers_per_gpu <= 3:
             raise ValueError("workers_per_gpu must be an integer from 1 to 3")
         if self.expected_cameras is not None:
@@ -364,10 +366,15 @@ class EvaluationConfig:
 
 def _validate_source_assets(configuration: dict, *, legacy: bool = False) -> None:
     """Hash local assets only; random debug depends on metadata, not pretrained weights."""
-    if configuration.get("backbone_initialization", "pretrained") == "random-frozen-debug":
+    if is_debug_initialization(configuration.get("backbone_initialization", "pretrained")):
         from choice_mem.checkpoint import validate_debug_source_assets
 
         validate_debug_source_assets(configuration)
+        return
+    if configuration.get("backbone") == "turbo_interaction":
+        from choice_mem.checkpoint import validate_turbo_source_assets
+
+        validate_turbo_source_assets(configuration)
         return
     from choice_mem.data import hash_file
 
@@ -528,10 +535,11 @@ def _validate_v2_checkpoint(payload: dict, expected_step: int) -> None:
         raise ValueError("Checkpoint optimization group/batch contract disagrees")
     if optimization.get("master_dtype") != "float32" or optimization.get("autocast_dtype") != configuration["dtype"]:
         raise ValueError("Checkpoint optimization master/autocast dtype contract disagrees")
-    if configuration.get("backbone_initialization", "pretrained") == "random-frozen-debug" and (
-        optimization.get("frozen_backbone_dtype") != "bfloat16"
-    ):
-        raise ValueError("Debug checkpoint optimization frozen_backbone_dtype must be bfloat16")
+    for field_name, expected_value in debug_precision_metadata(
+        configuration.get("backbone_initialization", "pretrained"), configuration["dtype"]
+    ).items():
+        if optimization.get(field_name) != expected_value:
+            raise ValueError(f"Debug checkpoint optimization {field_name} must be {expected_value}")
     for field_name in ("learning_rate", "backbone_learning_rate", "memory_head_learning_rate", "gradient_clip_norm", "weight_decay", "warmup_ratio"):
         value = optimization.get(field_name)
         if type(value) not in (int, float) or not math.isfinite(value) or value < 0 or (field_name not in {"weight_decay", "warmup_ratio"} and value == 0):
@@ -587,8 +595,8 @@ def validate_checkpoint(
     require_positive_integer(expected_step, "expected_step")
     if expected_action_head not in {"diffusion", "oft"}:
         raise ValueError("Unsupported expected action head")
-    if expected_backbone is not None and expected_backbone not in {"memoryvla", "qwen35"}:
-        raise ValueError("Expected backbone must be memoryvla or qwen35")
+    if expected_backbone is not None and expected_backbone not in {"memoryvla", "qwen35", "turbo_interaction"}:
+        raise ValueError("Expected backbone must be memoryvla, qwen35 or turbo_interaction")
     if not checkpoint.is_file() or checkpoint.stat().st_size == 0:
         raise ValueError(f"Missing or empty final checkpoint: {checkpoint}")
     from choice_mem.checkpoint import CHECKPOINT_SCHEMA, LEGACY_CHECKPOINT_SCHEMA, read_checkpoint
@@ -598,11 +606,12 @@ def validate_checkpoint(
     if type(payload["step"]) is not int or payload["step"] != expected_step:
         raise ValueError(f"Final checkpoint step must equal {expected_step}")
     configuration = payload["config"]
-    debug = configuration.get("backbone_initialization", "pretrained") == "random-frozen-debug"
+    initialization = configuration.get("backbone_initialization", "pretrained")
+    debug = is_debug_initialization(initialization)
     if debug and allow_debug_checkpoint is not True:
         raise ValueError("Debug checkpoint requires explicit allow_debug_checkpoint=True; not an official pretrained metric")
-    if configuration.get("backbone") not in {"memoryvla", "qwen35"}:
-        raise ValueError("Final checkpoint must use the memoryvla or qwen35 backbone")
+    if configuration.get("backbone") not in {"memoryvla", "qwen35", "turbo_interaction"}:
+        raise ValueError("Final checkpoint must use the memoryvla, qwen35 or turbo_interaction backbone")
     if expected_backbone is not None and configuration["backbone"] != expected_backbone:
         raise ValueError("Checkpoint backbone disagrees with expected_backbone")
     if configuration.get("action_head") != expected_action_head:
@@ -625,11 +634,11 @@ def validate_checkpoint(
         if not isinstance(tensor, torch.Tensor):
             raise ValueError(f"Final checkpoint model entry is not a tensor: {parameter_name}")
         require_fp32 = payload["schema"] == CHECKPOINT_SCHEMA or expected_step == 55000
-        expected_dtype = torch.bfloat16 if debug and parameter_name.startswith("backbone.") else torch.float32
+        expected_dtype = getattr(torch, debug_parameter_dtype(parameter_name, initialization)) if debug else torch.float32
         if (tensor.is_floating_point() or tensor.is_complex()) and (
             not torch.isfinite(tensor).all() or (require_fp32 and tensor.dtype != expected_dtype)
         ):
-            requirement = "non-BF16 backbone" if debug and parameter_name.startswith("backbone.") else "non-FP32"
+            requirement = "non-BF16 backbone" if expected_dtype == torch.bfloat16 else "non-FP32"
             raise ValueError(f"Final checkpoint has nonfinite/{requirement} model tensor: {parameter_name}")
     return {"step": payload["step"], "config": configuration, "protocol": payload["protocol"],
             "normalization": payload["normalization"]}
@@ -992,7 +1001,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--expected-training-steps", type=positive_integer, default=TARGET_OPTIMIZER_STEPS,
                         help="Expected completed optimizer budget; must match the checkpoint training contract")
     parser.add_argument("--expected-action-head", choices=("diffusion", "oft"), default="diffusion")
-    parser.add_argument("--expected-backbone", choices=("memoryvla", "qwen35"),
+    parser.add_argument("--expected-backbone", choices=("memoryvla", "qwen35", "turbo_interaction"),
                         help="Optional assertion of the saved policy backbone")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--native-child", action="store_true", help=argparse.SUPPRESS)

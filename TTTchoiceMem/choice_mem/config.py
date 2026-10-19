@@ -4,6 +4,35 @@ from dataclasses import asdict, dataclass, field
 
 
 SUPPORTED_CAMERAS = ("head_camera", "left_camera", "right_camera")
+DEBUG_INITIALIZATIONS = frozenset({"random-frozen-debug", "turbo-random-frozen-debug"})
+
+
+def is_debug_initialization(initialization):
+    return initialization in DEBUG_INITIALIZATIONS
+
+
+def debug_parameter_dtype(name, initialization):
+    """Torch-free storage contract; computation precision is recorded separately."""
+    if not is_debug_initialization(initialization):
+        raise ValueError("A debug initialization is required for the debug storage contract")
+    if initialization == "turbo-random-frozen-debug" and name.startswith("backbone.vision_language_interaction."):
+        return "float32"
+    return "bfloat16" if name.startswith("backbone.") else "float32"
+
+
+def debug_precision_metadata(initialization, dtype="bfloat16"):
+    if not is_debug_initialization(initialization):
+        return {}
+    metadata = {
+        "master_dtype": "float32", "autocast_dtype": dtype,
+        "frozen_backbone_dtype": "bfloat16",
+    }
+    if initialization == "turbo-random-frozen-debug":
+        metadata.update({
+            "frozen_backbone_dtype": "mixed:bfloat16,float32",
+            "frozen_interaction_dtype": "float32", "interaction_compute_dtype": "float32",
+        })
+    return metadata
 
 
 def validate_cameras(cameras) -> list[str]:
@@ -60,8 +89,8 @@ class PolicyConfig:
     asset_manifest: dict = field(default_factory=dict)
 
     def __post_init__(self):
-        if self.backbone_initialization not in {"pretrained", "random-frozen-debug"}:
-            raise ValueError("backbone_initialization must be pretrained or random-frozen-debug")
+        if self.backbone_initialization not in {"pretrained", *DEBUG_INITIALIZATIONS}:
+            raise ValueError("backbone_initialization must be pretrained, random-frozen-debug or turbo-random-frozen-debug")
         if type(self.backbone_initialization_seed) is not int or not 0 <= self.backbone_initialization_seed < 2**63:
             raise ValueError("backbone_initialization_seed must be an integer in [0, 2**63)")
         if self.backbone_initialization == "random-frozen-debug":
@@ -76,8 +105,25 @@ class PolicyConfig:
             for name, value in required.items():
                 if getattr(self, name) != value or (name == "freeze_backbone" and self.freeze_backbone is not True):
                     raise ValueError(f"random-frozen-debug requires {name}={value!r}")
-        if self.backbone not in {"memoryvla", "qwen35"}:
-            raise ValueError("backbone must be memoryvla or qwen35")
+        if self.backbone_initialization == "turbo-random-frozen-debug":
+            required = {
+                "backbone": "turbo_interaction", "freeze_backbone": True, "dtype": "bfloat16",
+            }
+            for name, value in required.items():
+                if type(getattr(self, name)) is not type(value) or getattr(self, name) != value:
+                    raise ValueError(f"turbo-random-frozen-debug requires {name}={value!r}")
+        if self.backbone not in {"memoryvla", "qwen35", "turbo_interaction"}:
+            raise ValueError("backbone must be memoryvla, qwen35 or turbo_interaction")
+        if self.backbone == "turbo_interaction":
+            # This identifier selects only the original vision architecture; it
+            # must not cause the replacement path to instantiate Llama or its projector.
+            required = {
+                "base_vlm_id": "prism-dinosiglip-224px+7b", "action_head": "diffusion",
+                "diffusion_model_type": "DiT-L", "image_size": [224, 224], "per_token_size": 256,
+            }
+            for name, value in required.items():
+                if getattr(self, name) != value:
+                    raise ValueError(f"turbo_interaction minimal replacement requires {name}={value!r}")
         if self.action_head not in {"diffusion", "oft"}:
             raise ValueError("action_head must be diffusion or oft")
         if self.action_dim != 14:

@@ -1,6 +1,6 @@
-# 第一阶段：MemoryVLA + RMBench 原生适配
+# MemoryVLA + RMBench：原生适配与可选实验路径
 
-本开发副本的主路线是 **原版 MemoryVLA VLM + 感知/认知双 Bank + DiT-L**，在 RMBench 原生数据与模拟器接口上训练、rollout。先建立尽可能接近原方法的基线，再研究 TurboVLA 的 VL interaction 替换；**本阶段没有接入 Turbo，也没有新增 TTT、学习式记忆选择或 OFT 方法**。
+本开发副本的默认路线仍是 **原版 MemoryVLA VLM + 感知/认知双 Bank + DiT-L**，在 RMBench 原生数据与模拟器接口上训练、rollout。第一阶段基线及其工程闭环记录保留。第二阶段已接入显式 Turbo VL-only 路径，原视觉真实加载、生产尺寸随机冻结策略的 CPU 前后向及完整 checkpoint 严格恢复已通过；包含 resume 协议修复的最新完整回归为521项通过、1项跳过、130个子测试通过。正式BERT和完整正式预训练适配器的生产尺寸CPU前后向也已通过（适配器使用测试特征损失，不是真实数据训练）。**第二阶段RMBench训练、真实RPC、原生rollout闭环尚未完成**。当前结果与边界见 [第二阶段接入说明](README_turbo_interaction.md)。没有新增 TTT、学习式记忆选择或 OFT 方法。
 
 修改仅在 `/mnt/data/dylan/d2/memory_l/TTTchoiceMem`。原工程 `/mnt/data/dylan/d2/memory/TTTchoiceMem`、参考源码和历史训练/评测产物不作为本副本的输出目录，也未被本轮改写。
 
@@ -53,7 +53,7 @@ Qwen/OFT、sequential 历史、masked loss 和 action-step PE 仅保留为**显�
 
 ## 验收边界
 
-CPU回归使用feature fixtures、小型DiT和mock原资产，检查数学/协议/恢复/接口；整套结果为377通过、1跳过、130 subtests通过，不能代替真实大模型或模拟器验收。另已实际完成原架构随机冻结模式的3步GPU训练与恢复，训练allocator峰值allocated约32.85GiB，并从最终checkpoint完成真实RPC推理。这不等于正式预训练全量微调验收，也没有取得正式RMBench成功率。真实训练前仍须核对独立环境、资产、显存和分布式条件，不能沿用旧Qwen0.8B估计。当前DDP在正式全量训练时每个rank复制完整FP32参数、梯度与AdamW状态，增加卡数不会分摊它们；7B级全量训练的静态状态就可能超过单张80GB显存。本阶段未改造成上游FSDP，未验收全量训练显存可行性。
+第一阶段CPU回归使用feature fixtures、小型DiT和mock原资产，检查数学/协议/恢复/接口，当时为377通过、1跳过、130 subtests通过。第二阶段的新回归和生产尺寸CPU模型验证单独记录于 [Turbo接入说明](README_turbo_interaction.md)，不沿用旧测试数，也不将CPU合成标签验证当作真实RMBench训练或模拟器验收。另已实际完成原架构随机冻结模式的3步GPU训练与恢复，训练allocator峰值allocated约32.85GiB，并从最终checkpoint完成真实RPC推理。这不等于正式预训练全量微调验收，也没有取得正式RMBench成功率。真实训练前仍须核对独立环境、资产、显存和分布式条件，不能沿用旧Qwen0.8B估计。当前DDP在正式全量训练时每个rank复制完整FP32参数、梯度与AdamW状态，增加卡数不会分摊它们；7B级全量训练的静态状态就可能超过单张80GB显存。本阶段未改造成上游FSDP，未验收全量训练显存可行性。
 
 本地资产清单为 `/mnt/data/dylan/d2/memory/RMBench/attention-test-memoryvla/assets/manifest.json`。本次随机冻结检验只使用其中经过校验的Llama config/tokenizer小型资产，没有读取、哈希或加载预训练大权重；不能据此宣称该清单中的预训练权重或正式全量训练已获验收。
 

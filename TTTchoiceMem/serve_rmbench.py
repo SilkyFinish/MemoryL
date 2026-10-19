@@ -21,7 +21,7 @@ def parse_args(argv=None):
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument(
         "--allow-debug-checkpoint", action="store_true",
-        help="Explicitly allow a random-frozen debug policy, never a pretrained benchmark result",
+        help="Explicitly allow either original or Turbo random-frozen debug checkpoints; never a pretrained benchmark result",
     )
     parser.add_argument("--rmbench-root", type=Path, default=DEFAULT_RMBENCH_ROOT)
     parser.add_argument("--device", default="cpu", help="Explicit model device; no GPU is selected automatically")

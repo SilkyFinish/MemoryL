@@ -14,7 +14,12 @@ class ChoiceMemoryPolicy(nn.Module):
         super().__init__()
         self.config = config
         if backbone is None:
-            backbone_class = Qwen35Backbone if config.backbone == "qwen35" else MemoryVLABackbone
+            if config.backbone == "turbo_interaction":
+                from .turbo_backbone import TurboInteractionBackbone
+
+                backbone_class = TurboInteractionBackbone
+            else:
+                backbone_class = Qwen35Backbone if config.backbone == "qwen35" else MemoryVLABackbone
             backbone = backbone_class(config, initialize_from_config=initialize_from_config)
         self.backbone = backbone
         dimensions = {"vision": backbone.vision_dim, "cognition": backbone.cognition_dim}

@@ -30,6 +30,7 @@ import subprocess
 import sys
 import time
 
+from choice_mem.config import debug_precision_metadata, is_debug_initialization
 from eval_multitask import (
     ALLOWED_GPU_IDS, EPISODES_PER_TASK, EvaluationConfig, GLOBAL_BATCH_SIZE, GROUP_SIZE,
     SEED_POOL_SIZE, TARGET_OPTIMIZER_STEPS, TASK_COUNT, build_suite_plan,
@@ -213,8 +214,8 @@ class TrainingJobPlan:
                for index, left in enumerate(directories) for right in directories[index + 1:]):
             raise ValueError("Job, training and evaluation directories must be independent")
         if self.evaluation_config is not None:
-            if arguments.backbone_initialization == "random-frozen-debug":
-                raise ValueError("random-frozen-debug plans are training-only; formal evaluation never allows debug checkpoints")
+            if is_debug_initialization(arguments.backbone_initialization):
+                raise ValueError(f"{arguments.backbone_initialization} plans are training-only; formal evaluation never allows debug checkpoints")
             if not set(self.evaluation_config.gpu_ids).issubset(self.allowed_gpus):
                 raise ValueError("Evaluation may use only the frozen allowed GPUs")
             if self.evaluation_config.expected_training_steps != self.target_optimizer_steps:
@@ -293,9 +294,9 @@ def resolve_completed_checkpoint(plan: TrainingJobPlan) -> Path:
     script_index = next(index for index, token in enumerate(command) if Path(token).name == "train_multitask.py")
     arguments = build_parser().parse_args(list(command[script_index + 1:]))
     debug_gate = {}
-    if arguments.backbone_initialization == "random-frozen-debug":
+    if is_debug_initialization(arguments.backbone_initialization):
         if plan.evaluation_config is not None:
-            raise ValueError("random-frozen-debug completion is training-only, not a formal evaluation gate")
+            raise ValueError(f"{arguments.backbone_initialization} completion is training-only, not a formal evaluation gate")
         # Only an immutable, explicitly selected debug training plan may opt in.
         # The formal pretrained call deliberately retains the default strict gate.
         debug_gate["allow_debug_checkpoint"] = True
@@ -338,8 +339,7 @@ def resolve_completed_checkpoint(plan: TrainingJobPlan) -> Path:
         "find_unused_parameters": arguments.find_unused_parameters,
         "schedule": "constant" if arguments.optimization_recipe == "memoryvla" else "cosine with linear warmup",
     }
-    if arguments.backbone_initialization == "random-frozen-debug":
-        expected_optimization.update(master_dtype="float32", frozen_backbone_dtype="bfloat16", autocast_dtype="bfloat16")
+    expected_optimization.update(debug_precision_metadata(arguments.backbone_initialization, arguments.dtype))
     if any(optimization.get(field) != value for field, value in expected_optimization.items()):
         raise ValueError("Final checkpoint optimization/batch/world size differs from the frozen training command")
     return checkpoint

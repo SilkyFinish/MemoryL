@@ -1,6 +1,6 @@
 """Freeze a fresh local stage-1 training plan; never launch training or evaluation.
 
-All training budgets and original MemoryVLA assets must be explicit. Historical
+All training budgets and original/Turbo local assets must be explicit. Historical
 Qwen plans are not templates for this route and are never rewritten. --dry-run
 prints the exact plan without importing torch or creating any output.
 """
